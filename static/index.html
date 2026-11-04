@@ -186,7 +186,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 #app.view-org #orgReset:not([hidden]){display:block}
 #app.view-org #edges,#app.view-org #nodes{display:none}
 /* Agenten-Leiste ist in jeder Grafik da (Wunsch ABI 2026-11-04); Hinweis und Ordnen passen sich an */
-#palette .hint-org,#palette .hint-hub{display:none}#app.view-org #palette .hint-plan,#app.view-hub #palette .hint-plan{display:none}#app.view-org #palette .hint-org,#app.view-hub #palette .hint-hub{display:inline}#app.view-hub #palette .pal-order{display:none}
+#palette .hint-org,#palette .hint-hub{display:none}#app.view-org #palette .hint-plan,#app.view-hub #palette .hint-plan{display:none}#app.view-org #palette .hint-org,#app.view-hub #palette .hint-hub{display:inline}
 /* Grafik-Auswahl (aufklappbar) */
 .vpick{position:relative}
 #gViewBtn{white-space:nowrap}
@@ -1012,8 +1012,8 @@ async function connectAsk(childId, bossId){  // Verbinden immer mit Rueckfrage, 
     b.onclick=()=>{ if(VIEW!=='plan'){ addAgent(k); return; } const r=$('#vp').getBoundingClientRect(); const w=toWorld(r.left+r.width/2-W/2*V.s, r.top+r.height/3); addAgent(k,w.x,w.y); };
     pal.appendChild(b);
   });
-  const ob=document.createElement('div'); ob.className='pal pal-order'; ob.textContent='🗂 Ordnen'; ob.title='Ordnen: im Bauplan alle Agenten als Organigramm anordnen, im Organigramm von Hand verschobene Karten zurücksetzen';
-  ob.onclick=()=>{ if(VIEW==='org'){ delete ORG.off[orgOffKey()]; orgSaveOff(); ORG.sig=''; drawOrg(); fit(); } else autoLayout(); }; pal.appendChild(ob);
+  const ob=document.createElement('div'); ob.className='pal pal-order'; ob.textContent='🗂 Ordnen'; ob.title='Ordnen: im Bauplan alle Agenten als Organigramm anordnen, im Organigramm von Hand verschobene Karten zurücksetzen, in Stadt/Kosmos/Molekül Drehung und Neigung zurücksetzen und alles einpassen';
+  ob.onclick=()=>{ if(VIEW==='hub'){ const c=hubCam(); hubTurn(-c.rot,-c.tilt); fit(); return; } if(VIEW==='org'){ delete ORG.off[orgOffKey()]; orgSaveOff(); ORG.sig=''; drawOrg(); fit(); } else autoLayout(); }; pal.appendChild(ob);
   [['hint-plan','Unterer Punkt am Knoten → auf anderen Knoten ziehen = verbinden. Linie anklicken = trennen.'],
    ['hint-org','Neue Agenten stehen zuerst ohne Chef. Karte auf eine andere ziehen = unterstellen.'],
    ['hint-hub','Neue Agenten kommen in das Projekt, das oben steht.']].forEach(([c,t])=>{ const h=document.createElement('span'); h.className='hint '+c; h.textContent=t; pal.appendChild(h); });
@@ -1918,7 +1918,7 @@ const HELP=[
 <li><b>Hineingehen:</b> Eine Firma antippen zoomt hinein. In der Stadt siehst du das Gebäude aufgeschnitten: eine Etage je Hierarchie-Ebene, so tief wie die Firma ist: ganz oben in der Chefetage die Leitung, darunter die Abteilungsleitungen, dann jede weitere Ebene. Jede Person sitzt in ihrem eigenen Raum in der Farbe ihrer Abteilung; hat eine Abteilung auf einer Ebene 4 Leute, gibt es dort 4 Räume. Mit Erfolg wächst das Gebäude: ab Stufe 2 Anbau und Dachgarten, ab Stufe 3 Antenne, ab Stufe 4 Hubschrauberlandeplatz. Rechts daneben steht das Organigramm (Leitung oben, Abteilungen darunter), jeder Kreis lässt sich antippen. Ein leuchtender Bildschirm heißt: dieser Agent arbeitet gerade. Im Kosmos wird das Sonnensystem groß: die Sonne ist die Leitung, jeder Planet eine Abteilung, die Monde sind ihre Agenten.</li>
 <li><b>Abteilung öffnen:</b> Links (auf dem Handy unten) steht die Liste der Abteilungen. Eine Abteilung, Etage oder ein Planet antippen zeigt rechts ihr Team mit Rolle, Zustand und laufenden Aufgaben. Ein Name darin öffnet den Agenten in der klassischen Ansicht mit Aufgaben, Chat und Einstellungen. Was du dort änderst, siehst du danach auch in Stadt und Kosmos.</li>
 <li><b>← Alle Firmen</b> oder Esc führt wieder hinaus.</li>
-<li><b>Drehen und Neigen:</b> Rechts unten drehen ⟲ ⟳ die Welt, ⤵ ⤴ neigen sie nach hinten, ⌂ stellt sie wieder gerade. Mit der Maus geht es auch: rechte Maustaste (oder Umschalttaste) gedrückt halten und ziehen, seitlich = drehen, hoch/runter = neigen. Auf dem Handy mit zwei Fingern drehen bzw. beide Finger gemeinsam hoch- oder runterschieben. Die Namen bleiben dabei lesbar, das Gerät merkt sich die Stellung je Welt.</li>
+<li><b>Drehen und Neigen:</b> Rechts unten drehen ⟲ ⟳ die Welt, ⤵ ⤴ neigen sie nach hinten, ⌂ oder „🗂 Ordnen“ oben stellt sie wieder gerade und passt alles ein, falls man sich verloren hat. Mit der Maus geht es auch: rechte Maustaste (oder Umschalttaste) gedrückt halten und ziehen, seitlich = drehen, hoch/runter = neigen. Auf dem Handy mit zwei Fingern drehen bzw. beide Finger gemeinsam hoch- oder runterschieben. Die Namen bleiben dabei lesbar, das Gerät merkt sich die Stellung je Welt.</li>
 <li><b>Agent hinzufügen:</b> Die Leiste unter der Wachstumsleiste ist in jeder Grafik da. Ein neuer Agent kommt in das Projekt, das oben steht.</li>
 <li><b>🤝 Zusammenarbeit:</b> Oben (oder 🤝 im Infofenster einer Firma) verbindest du zwei Firmen als Partner, mit „Lösen“ trennst du sie wieder. Nur Partner bekommen in der Stadt eine Straße, auf der Lieferwagen fahren, und im Kosmos fliegen Raumschiffe zwischen ihren Sonnen. Ruhen beide Firmen, ist nur ein langsames Fahrzeug unterwegs und die Straße bleibt dunkel. Arbeiten sie, leuchtet die Straße und es wird mehr Verkehr. Firmen ohne Partnerschaft bleiben unverbunden. Die Agenten merken davon nichts.</li>
 <li><b>🔍 Suche:</b> oben Firma oder Agent eintippen (Name oder Rolle). Ein Treffer zoomt in die Firma und zeigt den Agenten in seiner Abteilung.</li></ul>`},
