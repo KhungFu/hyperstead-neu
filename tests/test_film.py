@@ -284,3 +284,47 @@ def test_geraeusche_im_szenenton(root):
     F.scene_audio(root, sc, [], 2.0, dst)
     env = F.envelope(root, str(dst), 10)
     assert max(env[:8]) == 0 and max(env[10:13]) > 0.5  # still bis 1 s, dann der Piepton
+
+
+# ----------------------------------------------------------------------------- Atmo, Musik, Ducking (Wunsch ABI 2026-11-06)
+def test_atmo_normalize_und_hinweise(root):
+    f = _sfx(root, "brummen.wav")
+    p = plan()
+    sc = F.normalize(root, p)["szenen"][0]
+    assert sc["atmo"] is None and sc["ducken"] is True
+    notes = "\n".join(F.sound_notes(F.normalize(root, p)))
+    assert "SOUND: no atmo" in notes and "s01" in notes and "no music" in notes
+    p["szenen"][0].update(atmo=f, atmo_lautstaerke=0.7)
+    p["ducken"] = False
+    pl = F.normalize(root, p)
+    assert pl["szenen"][0]["atmo"].endswith("brummen.wav") and pl["szenen"][0]["atmo_lautstaerke"] == 0.7
+    assert pl["szenen"][0]["ducken"] is False and not any("no atmo" in n for n in F.sound_notes(pl))
+    p["szenen"][0]["atmo"] = "film/geraeusche/fehlt.wav"
+    with pytest.raises(ToolError, match="atmo"):
+        F.normalize(root, p)
+
+
+@ff
+def test_musik_wird_unter_sprache_leiser(root):
+    import subprocess
+    d = root / "film" / "geraeusche"
+    d.mkdir(parents=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=1", str(d / "musik.wav")], check=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=1000:duration=1", "-af", "volume=0.5",
+                    str(d / "sprache.wav")], check=True)
+    p = plan()
+    p["szenen"][0].update(dialog=[], musik="film/geraeusche/musik.wav", musik_lautstaerke=0.5,
+                          atmo="film/geraeusche/musik.wav", atmo_lautstaerke=0.2)
+    timed = [{"datei": str(d / "sprache.wav"), "start": 1.5, "ende": 2.5}]
+    levels = {}
+    for duck in (True, False):
+        p["ducken"] = duck
+        sc = F.normalize(root, p)["szenen"][0]
+        dst = root / f"d{duck}.wav"
+        F.scene_audio(root, sc, timed, 4.0, dst)
+        levels[duck] = F.envelope(root, str(dst), 10)
+    # envelope ist je Datei normiert: verglichen wird Sprache-Stelle zu Musik-Stelle davor.
+    # Ohne Ducking liegt die Sprache auf voller Musik, mit Ducking wird das Bett darunter leiser.
+    ratio = {k: v[20] / max(v[5], 1e-6) for k, v in levels.items()}
+    assert levels[True][5] > 0.1 and levels[True][36] > 0.1  # Musik vor und nach der Sprache da
+    assert ratio[True] < ratio[False] - 0.1, ratio
