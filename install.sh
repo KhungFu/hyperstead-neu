@@ -9,13 +9,13 @@
 #   ./install.sh --run      -> bubblewrap fuer das Recht "Code ausfuehren" (abgeschottet, ohne Internet)
 #   ./install.sh --node     -> Node.js LTS ohne sudo nach ~/.local (fuer Remotion & Co., deploy/node-ohne-sudo.sh --remotion)
 #   ./install.sh --print    -> CUPS-Programme (lp, lpstat) zum Drucken der Abendberichte auf einem Netzwerkdrucker
-#   ./install.sh --all      -> alles oben zusammen (system + code + piper + browser + run + print + service)
+#   ./install.sh --all      -> alles oben zusammen (system + code + piper + browser + run + print + node + service)
 #   Optionen sind kombinierbar. Danach pruefen:  ./venv/bin/python selftest.py
 set -euo pipefail
 cd "$(dirname "$0")"
 DIR="$(pwd)"
 OPT=" $* "
-case "$OPT" in *" --all "*) OPT="$OPT --system --code --piper --browser --run --print --service ";; esac
+case "$OPT" in *" --all "*) OPT="$OPT --system --code --piper --browser --run --print --node --service ";; esac
 has() { case "$OPT" in *" $1 "*) return 0;; esac; return 1; }
 
 command -v python3 >/dev/null || { echo "python3 fehlt: sudo apt install python3 python3-venv"; exit 1; }
