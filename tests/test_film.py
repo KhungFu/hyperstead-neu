@@ -236,3 +236,51 @@ def test_real_blender(root, monkeypatch):
     assert "s01.png" in F.film(root, {"op": "preview"})
     assert "gerendert" in F.film(root, {"op": "render"})
     assert T._probe(root / "film" / "clips" / "s01.mp4")["video"]
+
+
+# ----------------------------------------------------------------------------- Geraeusche (Wunsch ABI 2026-11-06)
+def _sfx(root, name="klick.wav"):
+    d = root / "film" / "geraeusche"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_bytes(b"RIFF0000WAVE")
+    return f"film/geraeusche/{name}"
+
+
+def test_geraeusche_normalize_and_times(root):
+    f = _sfx(root)
+    p = plan()
+    p["szenen"][0]["geraeusche"] = [{"datei": f, "zeit": 1.2}, {"datei": f, "zeile": 1, "zeit": -0.3, "schleife": True, "lautstaerke": 0.5},
+                                    {"datei": f, "zeile": 5}]
+    sc = F.normalize(root, p)["szenen"][0]
+    assert [g["zeile"] for g in sc["geraeusche"]] == [None, 1, 5] and sc["geraeusche"][1]["schleife"] is True
+    timed = [{"start": 0.5, "ende": 1.5}]
+    got = F.sound_times(sc, timed)
+    assert [g["start"] for g in got] == [1.2, 0.2]  # Zeile 5 gibt es nicht -> faellt weg
+
+
+def test_geraeusche_errors(root):
+    p = plan()
+    p["szenen"][0]["geraeusche"] = [{"datei": "film/geraeusche/fehlt.mp3"}, {"zeit": 1}, {"datei": "../x.mp3"}]
+    with pytest.raises(ToolError) as e:
+        F.normalize(root, p)
+    msg = str(e.value)
+    assert "geraeusch 1" in msg and "geraeusch 2: datei missing" in msg and "geraeusch 3" in msg
+    p["szenen"][0]["geraeusche"] = "klick.mp3"
+    with pytest.raises(ToolError, match="must be a list"):
+        F.normalize(root, p)
+
+
+@ff
+def test_geraeusche_im_szenenton(root):
+    import subprocess
+    sfx = root / "film" / "geraeusche"
+    sfx.mkdir(parents=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=880:duration=0.3", str(sfx / "piep.wav")], check=True)
+    p = plan()
+    p["szenen"][0]["dialog"] = []
+    p["szenen"][0]["geraeusche"] = [{"datei": "film/geraeusche/piep.wav", "zeit": 1.0}]
+    sc = F.normalize(root, p)["szenen"][0]
+    dst = root / "s.wav"
+    F.scene_audio(root, sc, [], 2.0, dst)
+    env = F.envelope(root, str(dst), 10)
+    assert max(env[:8]) == 0 and max(env[10:13]) > 0.5  # still bis 1 s, dann der Piepton

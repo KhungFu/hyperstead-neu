@@ -152,7 +152,7 @@ TOOLS = {
      requisiten (props) typ: baum=tree busch=bush haus=house stein=stone ball wolke=cloud blume=flower kiste=box bild=picture. ort (place): himmel=sky, boden=ground (false = none), hintergrund=background (image), licht=light tag|abend|nacht (day|evening|night).
      kamera: einstellung (shot) total|halbtotal|nah (wide|medium|close), ziel (target character), bewegung (movement) keine|zoom_rein|zoom_raus|schwenk_links|schwenk_rechts|folgen (none|zoom in|zoom out|pan left|pan right|follow).
      stimme/erzaehler_stimme (voice/narrator voice): lang, voice, pitch, rate, optional engine (e.g. elevenlabs only for the characters that should sound especially good).
-     dialog without figur = narrator (erzaehler_stimme). Optional: musik, musik_lautstaerke (volume), titelkarte (title card, seconds), renderer eevee|workbench|cycles.
+     dialog without figur = narrator (erzaehler_stimme). Optional: musik, musik_lautstaerke (volume), per scene "geraeusche" = sound effects at fixed points: [{"datei": "film/geraeusche/klick.mp3", "zeit": 2.5}] or bound to a dialogue line: {"datei": ..., "zeile": 2, "zeit": -0.3} (+ lautstaerke 0-3, schleife true = loop, dauer); create the sound files with sound_generate, titelkarte (title card, seconds), renderer eevee|workbench|cycles.
      Flow: op=save with "film": {...} (checks + saves) -> op=check -> op=voices -> op=preview, szene "s01" (still image, then view_image)
      -> op=render (szene "s01" or all; only changed scenes, can take long) -> op=assemble, name "film", untertitel (subtitles) true -> output/<name>.mp4"""),
     "make_document": ("media", """{"tool": "make_document", "format": "pdf", "title": "Book title", "author": "Name", "sources": ["chapter1.md", "chapter2.md"], "name": "book"}

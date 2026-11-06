@@ -46,6 +46,7 @@ LICHT = ("tag", "abend", "nacht")
 ENGINES = ("eevee", "workbench", "cycles")
 MAX_SZENEN = 60
 MAX_DAUER = 120.0
+MAX_GERAEUSCHE = 40
 WALK_SPEED = 1.6  # Meter pro Sekunde
 
 
@@ -280,6 +281,28 @@ def _norm_scene(root, sc, sid, plan, errs, guard):
         f = guard(_file, root, sc.get("musik"), f"Scene {sid}: musik", AUDIO_EXT)
         s["musik"] = str(f) if f else None
     s["musik_lautstaerke"] = guard(_f, sc.get("musik_lautstaerke"), 0.3, 0, 2, f"Scene {sid}: musik_lautstaerke") or 0.3
+    # Geraeusche an festen Stellen (Wunsch ABI 2026-11-06): Startzeit in Sekunden ODER an eine Dialogzeile gebunden
+    s["geraeusche"] = []
+    ger = sc.get("geraeusche") or []
+    if not isinstance(ger, list):
+        errs.append(f"Scene {sid}: geraeusche must be a list: [{{\"datei\": \"film/geraeusche/klick.mp3\", \"zeit\": 2.5}}]")
+        ger = []
+    for i, g in enumerate(ger[:MAX_GERAEUSCHE], 1):
+        g = g if isinstance(g, dict) else {"datei": g}
+        tag = f"Scene {sid}: geraeusch {i}"
+        f = guard(_file, root, g.get("datei"), tag, AUDIO_EXT) if g.get("datei") else errs.append(f"{tag}: datei missing")
+        zeile = None
+        if g.get("zeile") not in (None, ""):
+            zeile = guard(_f, g.get("zeile"), 1, 1, 60, f"{tag}: zeile")
+        if f:
+            s["geraeusche"].append({
+                "datei": str(f), "zeile": int(zeile) if zeile else None,
+                "zeit": guard(_f, g.get("zeit"), 0, -MAX_DAUER, MAX_DAUER, f"{tag}: zeit") or 0.0,
+                "lautstaerke": guard(_f, g.get("lautstaerke"), 1.0, 0, 3, f"{tag}: lautstaerke") or 1.0,
+                "schleife": g.get("schleife") is True,
+                "dauer": guard(_f, g.get("dauer"), 0, 0, MAX_DAUER, f"{tag}: dauer") or 0.0})
+    if len(ger) > MAX_GERAEUSCHE:
+        errs.append(f"Scene {sid}: at most {MAX_GERAEUSCHE} geraeusche per scene")
 
     ents = []
     figs = sc.get("figuren") or {}
@@ -457,13 +480,34 @@ def envelope(root, audio, fps):
     return [round(min(1.0, max(0.0, (v / top - 0.12) / 0.88)), 3) for v in vals]
 
 
+def sound_times(scene, timed):
+    """Startzeit jedes Geraeuschs: zeile N = Beginn der N-ten Dialogzeile + zeit (Versatz), sonst zeit ab Szenenbeginn."""
+    out = []
+    for g in scene.get("geraeusche") or []:
+        base = 0.0
+        if g.get("zeile"):
+            if g["zeile"] > len(timed):
+                continue  # Zeile gibt es nicht (mehr): Geraeusch weglassen statt falsch platzieren
+            base = timed[g["zeile"] - 1]["start"]
+        out.append(dict(g, start=round(max(0.0, base + g["zeit"]), 3)))
+    return out
+
+
 def scene_audio(root, scene, timed, dur, dst):
-    """Alle Zeilen an ihrer Startzeit + Szenenmusik -> eine WAV-Datei mit genau der Szenenlaenge."""
+    """Alle Zeilen an ihrer Startzeit + Geraeusche + Szenenmusik -> eine WAV-Datei mit genau der Szenenlaenge."""
     args, parts, n = ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", "anullsrc=r=48000:cl=stereo"], [], 1
     for ln in timed:
         args += ["-i", ln["datei"]]
         ms = int(ln["start"] * 1000)
         parts.append(f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,adelay={ms}|{ms}[a{n}]")
+        n += 1
+    for g in sound_times(scene, timed):
+        if g["start"] >= dur:
+            continue
+        args += (["-stream_loop", "-1"] if g["schleife"] else []) + ["-i", g["datei"]]
+        ms = int(g["start"] * 1000)
+        cut = f",atrim=0:{g['dauer']:.3f}" if g["dauer"] else (f",atrim=0:{dur - g['start']:.3f}" if g["schleife"] else "")
+        parts.append(f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo{cut},volume={g['lautstaerke']},adelay={ms}|{ms}[a{n}]")
         n += 1
     if scene.get("musik"):
         args += ["-stream_loop", "-1", "-i", scene["musik"]]
@@ -789,6 +833,7 @@ def _clip_index(root):
 def _scene_hash(plan, sc, timed):
     figs = {e["fig"]: plan["figuren"][e["fig"]] for e in sc["entities"] if "fig" in e}
     files = [figs[k].get("bild") or figs[k].get("datei") for k in figs] + [sc["ort"]["hintergrund"], sc.get("musik")] + \
+            [g["datei"] for g in sc.get("geraeusche") or []] + \
             [e.get("bild") for e in sc["entities"]] + [ln["datei"] for ln in timed]
     keys = {k: plan[k] for k in ("breite", "hoehe", "fps", "renderer", "samples", "umriss")}
     return _hash(SCRIPT_VERSION, keys, sc, figs, [(f, _mtime(f)) for f in files if f])

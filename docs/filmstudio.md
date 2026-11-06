@@ -78,6 +78,11 @@ Mehrere Filme: `datei: "film/folge2.json"` bei jedem Aufruf mitgeben.
 - **Ort:** `himmel`, `boden` (`false` = kein Boden), `hintergrund` (gemaltes Bild, füllt immer das ganze Bild), `licht` tag/abend/nacht.
 - **Kamera:** `einstellung` total/halbtotal/nah, `ziel` (Figur), `bewegung` keine/zoom_rein/zoom_raus/schwenk_links/schwenk_rechts/folgen.
 - **Ton:** `musik` und `musik_lautstaerke` je Szene oder für den ganzen Film.
+- **Geräusche** (je Szene, an festen Stellen): `"geraeusche": [{"datei": "film/geraeusche/klick.mp3", "zeit": 2.5}]` startet bei
+  Sekunde 2,5 der Szene. Mit `"zeile": 2` zählt `zeit` ab dem Beginn der zweiten Dialogzeile (auch negativ, z. B. `-0.3` = kurz davor).
+  Dazu `lautstaerke` (0–3, Standard 1), `schleife: true` (wiederholt bis zum Szenenende, z. B. Alarm oder Schiffsbrummen) und `dauer`
+  (abschneiden). Höchstens 40 je Szene. Die Dateien macht das Werkzeug `sound_generate` (`AUDIO_PROVIDER=elevenlabs`), oder du legst
+  eigene in `film/geraeusche/` ab. Gibt es die genannte Zeile nicht, fällt das Geräusch weg.
 - **Technik:** `renderer` eevee (Standard, Cartoon-Umriss), workbench (am schnellsten), cycles (ohne Grafikchip, langsamer);
   `samples`, `umriss: false`.
 
