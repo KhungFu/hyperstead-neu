@@ -480,6 +480,7 @@ IPP_TIMEOUT = float(os.environ.get("PCL_IPP_TIMEOUT", "5"))
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # Drucker stehen meist im Heimnetz: nie ueber einen Proxy
 _REQ_ID = [0]
 _DIRECT = {}  # Adresse -> gefundener IPP-Pfad eines Druckers (/ipp/print …)
+_TLS = {}  # http://host:port -> https://host:port, wenn der Drucker nur verschluesselt antwortet (HTTP 426)
 MAX_REMOTES = 20
 _HOST = r"(?:[A-Za-z0-9._\-]+|\[[0-9A-Fa-f:]+\])(?::\d{1,5})?"
 _MAIL = r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"
@@ -567,6 +568,7 @@ def _ipp(base, path, op, attrs, data=b""):
     """Eine IPP-Anfrage. Gibt (status, gruppen) zurueck; gruppen = Liste (tag, {name: [werte]})."""
     _REQ_ID[0] += 1
     path = path or "/"
+    base = _TLS.get(base, base)
     body = struct.pack(">BBHi", 2, 0, op, _REQ_ID[0]) + b"\x01"
     body += _attr(0x47, "attributes-charset", "utf-8") + _attr(0x48, "attributes-natural-language", "en")
     body += _attr(0x45, "printer-uri", ("ipps://" if base.startswith("https") else "ipp://") + base.split("://", 1)[1] + path)
@@ -576,8 +578,22 @@ def _ipp(base, path, op, attrs, data=b""):
             body += _attr(tag, name if i == 0 else "", v)
     body += b"\x03" + data
     req = urllib.request.Request(base + path, data=body, method="POST", headers={"Content-Type": "application/ipp"})
-    with _OPENER.open(req, timeout=IPP_TIMEOUT if not data else max(IPP_TIMEOUT, 60)) as r:
-        raw = r.read()
+    try:
+        with _OPENER.open(req, timeout=IPP_TIMEOUT if not data else max(IPP_TIMEOUT, 60)) as r:
+            raw = r.read()
+    except urllib.error.HTTPError as e:
+        # "426 Upgrade Required": der Drucker (z. B. Epson) nimmt IPP nur verschluesselt an. Einmal per TLS (ipps)
+        # versuchen, MIT Zertifikatspruefung. Klappt das nicht (selbst signiert), bleibt der 426-Fehler: dann druckt
+        # Hyperstead ueber die CUPS-Warteschlange desselben Druckers (siehe _cups_queue_for) oder erklaert den Weg.
+        if e.code != 426 or not base.startswith("http://"):
+            raise
+        tls = "https://" + base[len("http://"):]
+        try:
+            st, groups = _ipp(tls, path, op, attrs, data)
+        except (OSError, ValueError, urllib.error.URLError):
+            raise e from None
+        _TLS[base] = tls
+        return st, groups
     return _parse(raw)
 
 
@@ -624,6 +640,10 @@ def _ipp_error(addr, e):
     if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403):
         return (f"{addr} refuses access from this computer (HTTP {e.code}). If it is a computer with CUPS, run there once: "
                 "sudo cupsctl --remote-any --share-printers")
+    if isinstance(e, urllib.error.HTTPError) and e.code == 426:
+        return (f"{addr} answers, but only accepts encrypted IPP (426 Upgrade Required) with its own certificate. "
+                "Set the printer up in CUPS (sudo lpadmin -p NAME -E -v ipps://PRINTER-IP/ipp/print -m everywhere) and "
+                "Hyperstead prints through that queue; from Windows print through the Pi (Pi address as remote printer).")
     if "certificate" in msg.lower():
         return f"{addr}: the printer's certificate is not trusted ({msg}). Use ipp:// instead of ipps://."
     return (f"Cannot reach {addr} ({msg}). Is the printer on and in the same network or reachable from the internet, "
@@ -661,6 +681,30 @@ def _direct_path(e):
             if not isinstance(err, (ValueError, urllib.error.HTTPError)):
                 break  # nicht erreichbar: weitere Pfade bringen nichts
     raise last or ValueError("no IPP printer found")
+
+
+def _cups_queue_for(e):
+    """Lokale CUPS-Warteschlange, deren Geraeteadresse (lpstat -v) auf denselben Drucker zeigt, sonst ''.
+    CUPS spricht auch mit Druckern, die nur verschluesseltes IPP annehmen (426) - Hyperstead nimmt dann diesen Weg."""
+    if is_windows() or e.get("kind") not in ("host", "url"):
+        return ""
+    try:
+        queues, _ = _cups_queues()
+        out = _run(["lpstat", "-v"]).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    want = e["base"].split("://", 1)[1].lower()
+    for line in out.splitlines():
+        m = re.match(r"\s*device for (.+?):\s*(\S+)", line)
+        if not m or m.group(1) not in queues:
+            continue
+        d = parse_remote(m.group(2))
+        if not d or d["kind"] == "mail" or d["base"].split("://", 1)[1].lower() != want:
+            continue
+        if e["kind"] == "url" and d["path"] and d["path"] != e["path"]:
+            continue
+        return m.group(1)
+    return ""
 
 
 def _remote_queues(e):
@@ -713,6 +757,10 @@ def remote_items(remotes):
             model = (attrs.get("printer-make-and-model") or attrs.get("printer-info") or [""])[0]
             items.append({"name": a, "kind": "remote", "label": f"{a} ({model or 'remote printer'})"})
         except (OSError, ValueError, urllib.error.URLError) as err:
+            q = _cups_queue_for(e)
+            if q:
+                items.append({"name": a, "kind": "remote", "label": f"{a} (via CUPS queue {q})"})
+                continue
             errs.append(_ipp_error(a, err))
             items.append({"name": a, "kind": "remote", "label": f"{a} (remote printer, not reachable)"})
     return items, " ".join(errs)
@@ -809,6 +857,10 @@ def remote_print(t, title, text, remotes=""):
     try:
         base, path, attrs = _target_ipp(t)
     except (OSError, ValueError, urllib.error.URLError) as e:
+        q = _cups_queue_for(t["entry"]) if t["type"] == "ipp" else ""
+        if q:
+            ok, msg = print_text(q, title, text, ".")
+            return ok, f"Printed via the CUPS queue '{q}' (same printer): {msg}"
         return False, _ipp_error(t["entry"]["addr"], e)
     fmts = [f.lower() for f in attrs.get("document-format-supported", [])]
     try:
@@ -861,6 +913,13 @@ def remote_status(t, out):
     try:
         base, path, attrs = _target_ipp(t)
     except (OSError, ValueError, urllib.error.URLError) as e:
+        q = _cups_queue_for(t["entry"]) if t["type"] == "ipp" else ""
+        if q:
+            via = status(q)
+            via["printer"] = out["printer"]
+            via["lines"].insert(0, f"Checked via the CUPS queue '{q}' (same printer; direct IPP said: "
+                                   f"{getattr(e, 'reason', '') or e}).")
+            return via
         out["problems"].append(_ipp_error(a, e))
         return out
     state = (attrs.get("printer-state") or [0])[0]
