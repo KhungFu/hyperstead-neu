@@ -584,3 +584,102 @@ def test_cups_browsed_ohne_adresse(monkeypatch):
          'is cups-browsed running?')
     st = P.status("EPSON_ET_2810_Series@EPSON3B79F0.local")
     assert any("cups-browsed" in p and "lpadmin" in p and "everywhere" in p for p in st["problems"])
+
+
+# ---------------------------------------------------------------- Drucker verlangt verschluesseltes IPP (426 Upgrade Required)
+@pytest.fixture
+def epson426():
+    """Wie ein Epson ET-2810: antwortet auf ipp:// (http) immer mit 426 Upgrade Required."""
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(426, "Upgrade Required")
+            self.send_header("Upgrade", "TLS/1.2, HTTP/1.1")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    P._DIRECT.clear()
+    P._TLS.clear()
+    yield f"127.0.0.1:{srv.server_port}"
+    srv.shutdown()
+
+
+def cups_mit_epson(monkeypatch, addr):
+    """Lokales CUPS (Pi) mit der Warteschlange Epson_ET2810 auf genau diesen Drucker."""
+    calls = []
+    monkeypatch.setattr(P, "is_windows", lambda: False)
+    monkeypatch.setattr(P.shutil, "which", lambda n: "/usr/bin/" + n)
+
+    def run(cmd, **kw):
+        c = " ".join(cmd)
+        calls.append(c)
+        out = {"lpstat -a": "Epson_ET2810 accepting requests since Fri",
+               "lpstat -v": f"device for Epson_ET2810: ipp://{addr}/ipp/print",
+               "lpstat -l -p": "printer Epson_ET2810 is idle.  enabled since Fri"}
+        o = next((v for k, v in out.items() if c.startswith(k)), "")
+        if cmd[0] == "lp":
+            o = "request id is Epson_ET2810-16 (1 file(s))"
+        elif cmd[0] == "lpoptions":
+            o = "printer-make-and-model='EPSON ET-2810 Series' printer-state=3"
+        return subprocess.CompletedProcess(cmd, 0, o, "")
+    monkeypatch.setattr(P.subprocess, "run", run)
+    return calls
+
+
+def test_426_ohne_cups_erklaert_verschluesselung(monkeypatch, epson426):
+    monkeypatch.setattr(P, "is_windows", lambda: True)  # Laptop: kein CUPS
+    monkeypatch.setattr(P, "win_enum_printers", lambda: ([], "", ""))
+    addr = f"ipp://{epson426}/ipp/print"
+    st = P.status(addr, addr)
+    assert any("426 Upgrade Required" in p and "encrypted" in p and "Cannot reach" not in p for p in st["problems"])
+    ok, msg = P.print_text(addr, "t", "x", ".", addr)
+    assert not ok and "encrypted IPP" in msg
+
+
+def test_426_druckt_ueber_cups_warteschlange(monkeypatch, epson426):
+    addr = f"ipp://{epson426}/ipp/print"
+    calls = cups_mit_epson(monkeypatch, epson426)
+    items, err = P.remote_items(addr)
+    assert err == "" and items[0]["label"].endswith("(via CUPS queue Epson_ET2810)")
+    st = P.status(addr, addr)
+    assert st["printer"] == addr and not st["problems"], st
+    assert "CUPS queue 'Epson_ET2810'" in st["lines"][0]
+    ok, msg = P.print_text(addr, "Bericht", "Hallo", ".", addr)
+    assert ok and "Epson_ET2810" in msg, msg
+    assert any(c.startswith("lp -d Epson_ET2810") for c in calls)
+
+
+def test_426_andere_adresse_nimmt_nicht_fremde_warteschlange(monkeypatch, epson426):
+    cups_mit_epson(monkeypatch, "192.168.0.99")
+    addr = f"ipp://{epson426}/ipp/print"
+    _, err = P.remote_items(addr)
+    assert "426" in err
+
+
+def test_426_wechselt_auf_tls_und_merkt_es(monkeypatch):
+    """Nimmt der Drucker TLS mit gueltigem Zertifikat an, druckt Hyperstead direkt per ipps weiter."""
+    import io
+    import urllib.error
+    answer = struct.pack(">BBHi", 2, 0, 0, 1) + b"\x01" + _a(0x47, "attributes-charset", "utf-8") + \
+        b"\x04" + _a(0x23, "printer-state", 3) + b"\x03"
+    urls = []
+
+    class Op:
+        def open(self, req, timeout=None):
+            urls.append(req.full_url)
+            if req.full_url.startswith("http://"):
+                raise urllib.error.HTTPError(req.full_url, 426, "Upgrade Required", {}, io.BytesIO())
+            return io.BytesIO(answer)
+    monkeypatch.setattr(P, "_OPENER", Op())
+    P._TLS.clear()
+    st, groups = P._ipp("http://epson:631", "/ipp/print", 0x000B, [])
+    assert st == 0 and P._group(groups)["printer-state"] == [3]
+    assert urls == ["http://epson:631/ipp/print", "https://epson:631/ipp/print"]
+    P._ipp("http://epson:631", "/ipp/print", 0x000B, [])
+    assert urls[-1] == "https://epson:631/ipp/print" and len(urls) == 3
+    P._TLS.clear()
