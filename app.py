@@ -713,7 +713,45 @@ def live_list(agent_ids=None):
     return [dict(r, secs=int(now - r["start"])) for r in rows if agent_ids is None or r["agent_id"] in agent_ids]
 
 
-def call_llm(agent, messages, images=None):
+def ausweich_agent(agent):
+    """Ausweich-KI aus .env (PCL_KI_AUSWEICH=ollama, optional PCL_KI_AUSWEICH_MODEL): Kopie des Agenten mit diesem Anbieter,
+    oder None (nicht eingestellt, unbekannt oder der Agent nutzt ihn schon)."""
+    pid = os.environ.get("PCL_KI_AUSWEICH", "").strip().lower()
+    if not pid or pid not in PROVIDERS or pid in ("mock", "cli") or pid == (agent.get("provider") or ""):
+        return None
+    if not agent.get("provider"):
+        return None  # Agent ohne KI: Fehler soll sichtbar bleiben
+    return {**agent, "provider": pid, "model": os.environ.get("PCL_KI_AUSWEICH_MODEL", "").strip()}
+
+
+def call_llm(agent, messages, images=None, ausweich=True):
+    """Wie _call_llm_once. Scheitert der Anbieter des Agenten (z. B. Claude offline, Abo-Limit, Anmeldung abgelaufen),
+    antwortet die Ausweich-KI aus PCL_KI_AUSWEICH (z. B. Ollama auf dem eigenen Rechner). ausweich=False: kein Ausweichen (▶ Test)."""
+    try:
+        return _call_llm_once(agent, messages, images)
+    except Exception as e:
+        fb = ausweich_agent(agent) if ausweich else None
+        if not fb:
+            raise
+        grund = str(e)[:300]
+        print(f"KI-Ausweich: {agent.get('name') or ''} {agent.get('provider')} -> {fb['provider']} ({grund})")
+        try:
+            log("ai_fallback", f"{agent.get('name') or ''}: {agent.get('provider')} failed ({grund}) -> {fb['provider']}",
+                agent.get("project_id"), agent.get("id") or None)
+        except Exception:
+            pass
+        try:
+            return _call_llm_once(fb, messages, images)
+        except Exception as e2:
+            if images:  # lokale Modelle koennen oft keine Bilder
+                try:
+                    return _call_llm_once(fb, messages, None)
+                except Exception as e3:
+                    e2 = e3
+            raise RuntimeError(f"{e} | fallback {fb['provider']} also failed: {str(e2)[:300]}") from e2
+
+
+def _call_llm_once(agent, messages, images=None):
     """Wie _call_llm, protokolliert aber jeden erfolgreichen Aufruf (Tokens, Dauer, geschaetzte Kosten) fuer 📊 Nutzung
     und meldet ihn waehrend der Laufzeit in LLM_LIVE (Dashboard zeigt „⏳ … schreibt“)."""
     t0 = time.time()
@@ -4170,7 +4208,7 @@ def api_provider_test():
              "name": "Test", "id": 0, "perms": "{}"}
     t0 = time.time()
     try:
-        text, tok = call_llm(agent, [{"role": "user", "content": "Answer only with the word: ready"}])
+        text, tok = call_llm(agent, [{"role": "user", "content": "Answer only with the word: ready"}], ausweich=False)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)[:400]})
     return jsonify({"ok": True, "reply": text.strip()[:200], "tokens": tok, "seconds": round(time.time() - t0, 1),

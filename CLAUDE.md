@@ -177,7 +177,10 @@ Selbst gehosteter Knoten-Editor für ein Team aus KI-Agenten (früher PaperclipL
 - Schranken `settings gates:<pid>` (`plan`, `recruit`, Standard aus): `request_gate` legt `approvals.kind='plan'|'recruit'` mit `data` (JSON) an,
   Aufgabe `waiting_approval`; `decide_gate` (Web + Telegram `ga:`/`gd:` mit Approval-ID, atomar) erzeugt dann die Teilaufgaben bzw. ruft `recruit_team`.
   Ablehnen = `failed` -> Post -> Antwort = neu planen. Nur oberste, nicht geplante Aufgaben im Modus `plan`. Shell nie ueber Telegram.
-- `call_llm` = Huelle um `_call_llm`, schreibt jeden Aufruf in `llm_calls` (`record_call`, `est_cost` mit `PRICES`/`PCL_PRICES`, Abo/lokal = 0).
+- Ausweich-KI (Wunsch ABI 2026-11-07): `call_llm` ruft `_call_llm_once`; scheitert es, nimmt `ausweich_agent` den Anbieter aus `PCL_KI_AUSWEICH`
+  (+ `PCL_KI_AUSWEICH_MODEL`), Audit `ai_fallback`, mit Bildern erst mit, dann ohne. `/api/providers/test` ruft `ausweich=False`. Tests `tests/test_ki_ausweich.py`.
+  `win_pfade.bekannte_ordner` kennt `%USERPROFILE%\.local\bin` (claude.exe vom offiziellen Installer, oft ohne PATH-Eintrag).
+- `call_llm` = Huelle um `_call_llm_once`/`_call_llm`, schreibt jeden Aufruf in `llm_calls` (`record_call`, `est_cost` mit `PRICES`/`PCL_PRICES`, Abo/lokal = 0).
   Abo-Warnung `PCL_ABO_WARN_5H` einmal je 5 h (`settings abo_warn:<anbieter>`). API `/api/usage?days=`.
 - Tests: `tests/` (pytest, `conftest.drain()` arbeitet die Queue synchron ab). Neue Funktionen dort mit abdecken.
 
