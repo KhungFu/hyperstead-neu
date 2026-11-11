@@ -1450,7 +1450,9 @@ def werkstatt_cli_args(agent, argv):
             deny += [f"Bash({c} *)" for c in ("npm install", "npm i", "npm ci", "npm add", "pnpm add", "pnpm install", "yarn add", "yarn install",
                                                "pip install", "pip3 install", "python -m pip", "python3 -m pip", "py -m pip", "uv pip", "uv add",
                                                "pipx", "winget", "choco", "scoop", "apt", "apt-get", "sudo", "brew", "cargo install", "go install",
-                                               "gem install", "npx -y", "npx --yes", "rm -rf", "Remove-Item", "git push")]
+                                               "gem install", "npx -y", "npx --yes", "rm -rf", "Remove-Item", "git push",
+                                               "gh pr merge", "gh pr ready", "gh release", "gh repo", "gh api", "gh workflow run",
+                                               "docker push", "npm publish", "cargo publish", "kubectl", "terraform")]
         out[1:1] = ["--tools", ",".join(tools_), "--allowedTools", ",".join(tools_), "--disallowedTools", ",".join(deny)]
         if lvl >= 3:
             out[1:1] = ["--permission-mode", "bypassPermissions"]
