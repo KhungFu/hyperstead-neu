@@ -304,6 +304,14 @@ Selbst gehosteter Knoten-Editor für ein Team aus KI-Agenten (früher PaperclipL
   cwd = Projektordner, Zeitlimit `PCL_WERKSTATT_TIMEOUT`. Gegen echte CLIs ungetestet. Tests `tests/test_werkstatt.py`, Doku `docs/werkstatt.md`.
 - Nicht gebaut: Stopp-Knopf fuer laufende Befehle, Live-Protokoll eines CLI-Laufs.
 
+## Softwarefirma Steadforge Labs (Wunsch ABI 2026-11-11)
+- Vorlage `softwarefirma` in `company_templates.py` (CEO, CTO Release Management, Cloud architect, Backend, Frontend, QA & Security unter dem CEO,
+  Product & Business), `RELEASE_RULE` steht in CEO- und CTO-Prompt. Texte zum Einfuegen (Firmenwissen, CEO-Startauftrag, Freigabe-Saetze) und
+  Anleitung in `docs/steadforge/`. Firmenwissen als Text ins Feld (nur .md/.txt kommen in den Prompt, `PCL_KNOWLEDGE_CHARS` 8000).
+- Werkstatt `PUBLISH` (werkstatt.py): git push, gh pr merge/ready, gh release, gh repo, gh workflow run, gh api mit PUT/POST/PATCH/DELETE,
+  docker/npm/cargo publish, Deploy-CLIs, kubectl/terraform = immer Antrag (auch Stufe 2), dazu `--disallowedTools` fuer claude_cli.
+  Stufe 3 (`PCL_WERKSTATT_FREI=1`) umgeht das bewusst. Tests `tests/test_softwarefirma.py`, `test_classify_veroeffentlichen_nur_mit_ok`.
+
 ## Post / Telegram
 - `tasks.inbox`: `''` / `new` / `closed`, nur für oberste Aufgaben. `finish()` → `inbox_arrived()` → Telegram-Nachricht.
 - `inbox_close`, `inbox_rework` (setzt feedback/prev_result, passes=0), `inbox_new_order` werden von Web-API und Telegram geteilt.
