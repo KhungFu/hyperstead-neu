@@ -605,6 +605,7 @@ button:focus-visible,a:focus-visible,[tabindex]:focus-visible,select:focus-visib
         <button class="side-btn" id="btnGroupAI" title="Select several agents and switch them to one AI / model together">🔀 AI for group</button>
         <button class="side-btn" id="btnModels" title="Switch agents whose AI model no longer exists to another one">⚠ Models <span class="badge" id="mdbadge" style="display:none">0</span></button>
         <button class="side-btn" id="btnKnow" title="What all agents of this project should always know">🧠 Company knowledge</button>
+        <button class="side-btn" id="btnCoop" title="Companies working together: partnerships and outsourcing assignments to other companies">🤝 Collaboration</button>
       </details>
       <details class="side-grp" data-grp="daten">
         <summary title="Project files, cloud upload and webhooks (tap to expand or collapse)">📁 Files &amp; connections<span class="grp-dot" aria-hidden="true"></span></summary>
@@ -2104,6 +2105,7 @@ const HELP=[
 <li><b>Modern:</b> all companies at once. Open them in the graphic menu at the top in the “Modern” group (🏙 City, 🌌 Cosmos or 🧬 Molecule). The top bar with project and growth stays in place; that is also where you switch back to “Classic”.</li>
 <li><b>🏙 City:</b> every company is a building on its own plot. The more it has grown, the taller the building. When a company is working, its lights go on; quiet companies are almost dark.</li>
 <li><b>🧬 Molecule:</b> every company is its own molecule, shape and colors differ per company. Partner companies are connected by a glowing rod between their managements, sparks travel along it (more when both are working). Tapping zooms in, every sphere opens department and agent.</li>
+<li><b>🤝 Outsourcing between companies:</b> companies can work for each other. If a company's top boss gets stuck or their team lacks a skill, they hand that part to another company (field “outsource”). The other company's boss receives it as a normal task, plans it with their own team and reports back. Files the boss sends along land there in input/from-&lt;company&gt;/, the finished files come back into partner/&lt;company&gt;/. The boss checks the report like an employee's and can send it back for revision. A road (or spaceship route) between the two appears automatically. In the 🤝 window you decide per company whether it accepts assignments and whether it may outsource. If “Approve the top boss's plan” is on, outsourcing waits for your approval too. Only companies on this server work together.</li>
 <li><b>🖼 Logo:</b> in a company's info panel you can upload your own logo under “Logo” (PNG, JPEG or WebP, at most 2 MB). In the city it stands as a sign on the roof, in the cosmos in the middle of the sun. ✕ removes it again.</li>
 <li><b>🌌 Cosmos:</b> every company is a solar system. The sun is the management, the planets are the departments (bigger = more agents), and every employee is a moon of their department's planet. Suns and planets turn on their own axis like real ones, the moons only circle their planet. A glowing ring means: this department is working right now. There are no lines between the systems.</li>
 <li><b>Going inside:</b> tapping a company zooms in. In the city you see the building cut open: one floor per hierarchy level, as deep as the company is: the management at the very top on the executive floor, below it the department heads, then every further level. Every person sits in their own room in the color of their department; if a department has 4 people on one level, there are 4 rooms there. Every floor places its rooms centered and evenly spaced, departments stay together, the building is as wide as the fullest floor. The building grows with success: from stage 2 an annex and roof garden, from stage 3 an antenna, from stage 4 a helipad. To the right is the org chart (management at the top, departments below), every circle can be tapped. A glowing screen means: this agent is working right now. In the cosmos the solar system gets big: the sun is the management, every planet a department, the moons circling it are its agents (tap a moon to open that agent).</li>
@@ -3293,23 +3295,31 @@ function hubPlaceTraffic(t){
 /* Partnerschaften setzen und lösen. Nur du legst sie an, die Agenten sehen davon nichts. */
 async function showFirmLinks(pre){
   openOv('🤝 Collaboration'); await loadFirms(true);
-  const F=HUB.d?HUB.d.firms:[], name=id=>(F.find(f=>f.id===id)||{name:'#'+id}).name;
+  const D=VIEW==='hub'?HUB.d:await api('/firms').catch(()=>null);
+  const F=D?D.firms:[], name=id=>(F.find(f=>f.id===id)||{name:'#'+id}).name;
   const opts=F.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('');
-  $('#ovbody').innerHTML = `<p style="color:var(--mute);margin-top:0">When two companies work together, a road with delivery vans connects them in the city and spaceships fly back and forth in the cosmos. The more both are working, the more traffic. Companies without a partnership stay unconnected. The agents notice nothing of this, it is only the view.</p>
+  $('#ovbody').innerHTML = `<p style="color:var(--mute);margin-top:0">When two companies work together, a road with delivery vans connects them in the city and spaceships fly back and forth in the cosmos. The more both are working, the more traffic. Companies without a partnership stay unconnected.</p>
+    <p style="color:var(--mute)">Outsourcing: the top boss of a company can hand part of an assignment to another company when their own team cannot do it or is stuck. The other company's boss gets it as a task, files go along, and the report and files come back (folder partner/). A road appears automatically. Here you decide per company:</p>
+    <div id="flCoop">${F.map(f=>`<div class="wcard" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><b style="flex:1;min-width:120px">${esc(f.name)}</b>
+      <label class="chk" style="margin:0"><input type="checkbox" data-coop="${f.id}" data-k="accept" ${(!f.coop||f.coop.accept)?'checked':''}> accepts assignments</label>
+      <label class="chk" style="margin:0"><input type="checkbox" data-coop="${f.id}" data-k="send" ${(!f.coop||f.coop.send)?'checked':''}> may outsource</label></div>`).join('')}</div>
     ${F.length<2?'<div class="ops-empty">You need at least two companies (projects) for this.</div>':`
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><select id="flA" aria-label="First company" style="width:auto;flex:1;min-width:130px">${opts}</select> ↔ <select id="flB" aria-label="Second company" style="width:auto;flex:1;min-width:130px">${opts}</select>
     <input id="flNote" placeholder="What for? (optional)" maxlength="200" aria-label="What they work together on" style="flex:1;min-width:120px"><button class="btn sm" id="flAdd" title="Link the two selected companies as partners">🤝 Link</button></div>`}
-    <div id="flList" style="margin-top:12px">${(HUB.d?HUB.d.links:[]).map(l=>`<div class="wcard" style="display:flex;align-items:center;gap:8px"><span>${esc(name(l.a))} ↔ ${esc(name(l.b))}${l.note?` <small style="color:var(--mute)">${esc(l.note)}</small>`:''}</span>
+    <div id="flList" style="margin-top:12px">${(D?D.links:[]).map(l=>`<div class="wcard" style="display:flex;align-items:center;gap:8px"><span>${esc(name(l.a))} ↔ ${esc(name(l.b))}${l.note?` <small style="color:var(--mute)">${esc(l.note)}</small>`:''}</span>
       <button class="btn sm danger" data-unlink="${l.id}" style="margin-left:auto" title="End the partnership: road and spaceships disappear">Separate</button></div>`).join('') || '<div class="ops-empty">No partnership yet.</div>'}</div>`;
   if($('#flA') && pre) $('#flA').value=pre;
   if($('#flB')){ const other=F.find(f=>f.id!==(+$('#flA').value)); if(other) $('#flB').value=other.id; }
   if($('#flAdd')) $('#flAdd').onclick=async ()=>{ const a=+$('#flA').value, b=+$('#flB').value;
     if(a===b) return toast('Please choose two different companies.');
     await api('/firms/links','POST',{a,b,note:$('#flNote').value}); HUB.sig=''; showFirmLinks(); };
+  $('#flCoop').onchange=async e=>{ const c=e.target.closest('[data-coop]'); if(!c) return;
+    await api('/projects/'+c.dataset.coop+'/coop','PUT',{[c.dataset.k]:c.checked}); toast('Saved'); };
   $('#flList').onclick=async e=>{ const b=e.target.closest('[data-unlink]'); if(!b) return;
     await api('/firms/links/'+b.dataset.unlink,'DELETE'); HUB.sig=''; showFirmLinks(); };
 }
 $('#hubLink').onclick=()=>showFirmLinks(HUB.sel||HUB.inside);
+$('#btnCoop').onclick=()=>showFirmLinks(S.pid);
 
 /* Infofenster: Firma (Übersicht) oder eine Abteilung mit ihren Agenten, Status und laufenden Aufgaben. */
 function hideHubCard(){ HUB.sel=null; $('#hubcard').classList.remove('on'); $('#hubsvg').querySelectorAll('.firm.sel').forEach(e=>e.classList.remove('sel')); }
