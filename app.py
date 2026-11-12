@@ -1114,6 +1114,12 @@ def mock_llm(agent, messages):
         out["result"] = f"[Mock {agent['name']}] Plan: task distributed to the team."
         out["delegate"] = [{"to": k["name"], "title": title[:80],
                             "description": "Please take over: " + user[:200]} for k in kids]
+    m = re.search(r"OUTSOURCE TO (\S+)", user)  # Test: an eine Partnerfirma auslagern
+    if m and "PARTNER FIRMS" in messages[0]["content"]:
+        out.pop("delegate", None)
+        out["result"] = f"[Mock {agent['name']}] Plan: part goes to a partner firm."
+        out["outsource"] = [{"firm": m.group(1).strip(), "title": title[:80], "description": "Please take over: " + user[:200],
+                             "files": re.findall(r"SEND FILE (\S+)", user)}]
     if p["write_files"]:
         out["write_file"] = [{"path": f"{agent['name'].lower()}_note.txt", "content": "Mock file\n" + user[:200]}]
     return json.dumps(out, ensure_ascii=False), 50
@@ -1791,7 +1797,7 @@ def language_line():
             + " These instructions are in English only for technical reasons.")
 
 
-def build_system(agent, project, mode, final_only=False, team_change_ok=False):
+def build_system(agent, project, mode, final_only=False, team_change_ok=False, firms=""):
     """mode: 'work' = selbst erledigen, 'plan' = Chef plant/verteilt, 'review' = Chef liest Berichte und beurteilt."""
     perms = perms_of(agent)
     parent = q1("SELECT name, role FROM agents WHERE id=?", (agent["parent_id"],)) if agent["parent_id"] else None
@@ -1859,6 +1865,14 @@ def build_system(agent, project, mode, final_only=False, team_change_ok=False):
             if perms["delegate"] and kids:
                 fields.append('"delegate": [{"to": "Name", "title": "...", "description": "..."}]')
                 rules.append("delegate is optional here and meant only for follow-up tasks.")
+    if mode in ("plan", "review") and firms and not final_only:
+        s.append(firms)
+        fields.append('"outsource": [{"firm": "exact name of the partner firm", "title": "...", "description": "...", '
+                      '"files": ["relative/path in your project to send along"]}]')
+        rules.append("outsource (optional) hands part of the assignment to a partner firm: use it when your own team cannot do a part "
+                     "(missing skills or permissions) or is stuck on it. The other firm knows ONLY what you write in description "
+                     "(goal, scope, format, quality criteria, deadline). Its report comes back to you like an employee's report, "
+                     "its files land in partner/<firm>/ in your project, and you can send it back for revision. Use exact firm names only.")
     if mode in ("plan", "review") and team_change_ok and not final_only:
         fields.append('"recruit": [{"name": "new name", "role": "role", "reports_to": "name or empty = directly to you", '
                       '"system_prompt": "work instructions", "tools": ["web"]}]')
@@ -2007,6 +2021,9 @@ def review_prompt(t, child_tasks):
     per = min(6000, max(800, MAX_CONTEXT_CHARS // max(1, len(child_tasks))))
     for c in child_tasks:
         ag = q1("SELECT name, role FROM agents WHERE id=?", (c["agent_id"],)) or {"name": "?", "role": ""}
+        if c["project_id"] != t["project_id"]:
+            fp = q1("SELECT name FROM projects WHERE id=?", (c["project_id"],)) or {"name": "?"}
+            ag = {"name": f"partner firm {fp['name']}", "role": ag["name"]}
         parts.append(f"--- [Task #{c['id']}] {c['title']} | Employee: {ag['name']} ({ag['role']}) | "
                      f"Status: {STATUS_DE.get(c['status'], c['status'])} | Send-backs: {c['rounds']}/{MAX_REVISIONS}\n"
                      + clip(c["result"], per))
@@ -2054,6 +2071,183 @@ def create_subtasks(t, resolved, auto_run, notes):
     return len(resolved)
 
 
+# ------------------------------------------------ Firmen-Kooperation: Auftraege an andere Firmen auslagern (Wunsch ABI 2026-11-12)
+# Der Chef ganz oben einer Firma (ohne Vorgesetzten, Recht delegate) kann im Plan/Review Teile an eine andere Firma derselben
+# Installation geben. Die Aufgabe landet beim Chef der anderen Firma als Kind der eigenen Aufgabe (parent_task_id), dadurch
+# wecken, pruefen und zurueckgeben (review) wie im eigenen Team. Dateien gehen hin (input/from-<firma>/task-<id>/) und zurueck
+# (partner/<firma>/task-<id>/). Jede Firma kann Annehmen/Auslagern abschalten (settings coop:<pid>).
+COOP_DEFAULT = {"send": True, "accept": True}
+OUTSOURCE_MAX = 3
+
+
+def coop_of(pid):
+    try:
+        g = json.loads(get_setting(f"coop:{pid}", "") or "{}")
+    except ValueError:
+        g = {}
+    return {k: bool(g.get(k, v)) for k, v in COOP_DEFAULT.items()}
+
+
+def project_chain(t):
+    """Alle Projekte, durch die dieser Auftrag schon gelaufen ist (gegen Ringe A -> B -> A)."""
+    out, cur, n = set(), t, 0
+    while cur and n < 50:
+        out.add(cur.get("project_id"))
+        cur = q1("SELECT * FROM tasks WHERE id=?", (cur["parent_task_id"],)) if cur.get("parent_task_id") else None
+        n += 1
+    return out
+
+
+def partner_firms(pid, exclude=()):
+    """Firmen, die Auftraege annehmen: anderes Projekt, Annehmen an, Chef mit KI."""
+    out = []
+    for p in q("SELECT id, name, goal FROM projects WHERE id<>? ORDER BY id", (pid,)):
+        if p["id"] in exclude or not coop_of(p["id"])["accept"]:
+            continue
+        boss = top_agent(p["id"])
+        if not boss or not (boss.get("provider") or "").strip() or boss["paused"]:
+            continue
+        team = q("SELECT name, role FROM agents WHERE project_id=? AND id<>? ORDER BY id LIMIT 12", (p["id"], boss["id"]))
+        out.append({**p, "boss": boss, "team": team})
+    return out
+
+
+def can_outsource(agent, project):
+    return (not agent.get("parent_id") and perms_of(agent)["delegate"] and coop_of(project["id"])["send"])
+
+
+def firms_block(agent, project, t=None):
+    """Firmenverzeichnis fuer den obersten Chef (nur Name, Ziel, Rollen, keine Rechte/Anbieter)."""
+    firms = partner_firms(project["id"], project_chain(t) if t else ())
+    if not firms:
+        return ""
+    lines = []
+    for f in firms[:12]:
+        roles = ", ".join(f"{m['role'] or m['name']}" for m in f["team"]) or "works alone"
+        lines.append(f"- {f['name']}: goal {clip(f['goal'] or '(not set)', 200)} | boss: {f['boss']['role'] or f['boss']['name']} | team: {roles}")
+    return ("PARTNER FIRMS (other companies on this server that accept assignments):\n" + "\n".join(lines))
+
+
+def resolve_outsourcing(items, t, notes):
+    """outsource-Liste des Modells -> [(Projekt, Chef, Titel, Beschreibung, Dateien)], nur Firmen aus partner_firms."""
+    firms = {f["name"].strip().lower(): f for f in partner_firms(t["project_id"], project_chain(t))}
+    out = []
+    for item in (items if isinstance(items, list) else [])[:OUTSOURCE_MAX]:
+        if not isinstance(item, dict):
+            continue
+        f = firms.get(str(item.get("firm", "")).strip().lower())
+        if not f:
+            notes.append(f"Unknown partner firm '{item.get('firm')}' (or it does not accept assignments) - ignored.")
+            continue
+        files = [str(x) for x in (item.get("files") if isinstance(item.get("files"), list) else [])][:20]
+        out.append((f, str(item.get("title", "Task"))[:200], str(item.get("description", ""))[:6000], files))
+    return out
+
+
+TRANSFER_SKIP = ("input", "handover", "partner")
+
+
+def transfer_files(src_root, rels, dst_dir):
+    """Dateien/Ordner aus src_root nach dst_dir kopieren (keine Dotpfade, keine Symlinks, Limits wie copy_files).
+    Gibt (Liste der Zielpfade relativ zu dst_dir, Hinweise) zurueck."""
+    import shutil
+    src_root = Path(src_root).resolve()
+    picked, notes = [], []
+    for rel in rels:
+        try:
+            a = tools._inside(src_root, rel)
+        except ValueError:
+            notes.append(f"{rel}: outside the project folder")
+            continue
+        parts = a.relative_to(src_root).parts if a != src_root else ()
+        if not parts or any(x.startswith(".") for x in parts) or not a.exists():
+            notes.append(f"{rel}: not found or not allowed")
+            continue
+        fs = [a] if a.is_file() else [f for f in sorted(a.rglob("*")) if f.is_file()
+                                      and not any(x.startswith(".") for x in f.relative_to(src_root).parts)]
+        picked += [(f, f.relative_to(src_root)) for f in fs if not f.is_symlink()]
+    return _copy_limited(picked, dst_dir, notes)
+
+
+def _copy_limited(picked, dst_dir, notes):
+    import shutil
+    out, total = [], 0
+    for f, rel in picked:
+        size = f.stat().st_size
+        if len(out) >= tools.COPY_MAX_FILES or total + size > tools.COPY_MAX_BYTES:
+            notes.append(f"Limit reached ({tools.COPY_MAX_FILES} files / {tools.COPY_MAX_BYTES // 1048576} MB), the rest was left out.")
+            break
+        t = Path(dst_dir) / rel
+        t.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(f, t)
+        out.append(str(rel).replace("\\", "/"))
+        total += size
+    return out, notes
+
+
+def create_outsourced(t, resolved, notes):
+    """Auslagern: Aufgabe beim Chef der Partnerfirma anlegen, Dateien mitgeben, Partnerschaft sichtbar machen."""
+    src = q1("SELECT * FROM projects WHERE id=?", (t["project_id"],))
+    made = 0
+    for f, title, desc, files in resolved:
+        boss = f["boss"]
+        nid = ex("INSERT INTO tasks(project_id,agent_id,parent_task_id,title,description,status,created,updated,goal_id)"
+                 " VALUES(?,?,?,?,?,?,?,?,?)",
+                 (f["id"], boss["id"], t["id"], f"[{src['name']}] {title}"[:200], "", "queued", time.time(), time.time(), 0))
+        given = []
+        if files:
+            rel_dir = Path("input") / f"from-{src.get('folder') or src['id']}" / f"task-{nid}"
+            got, fn = transfer_files(proj_dir(src["id"]), files, proj_dir(f["id"]) / rel_dir)
+            given = [f"{rel_dir.as_posix()}/{g}" for g in got]
+            notes += [f"Files for {f['name']}: {x}" for x in fn]
+        who = (q1("SELECT name FROM agents WHERE id=?", (t["agent_id"],)) or {"name": "?"})["name"]
+        body = (f"ASSIGNMENT FROM THE PARTNER FIRM '{src['name']}' (outsourced by {who}). "
+                "They only know what you report back: deliver a complete result. Files you create in this project while working on it "
+                "are handed over to them automatically when you finish.\n\n" + desc)
+        if given:
+            body += "\n\nFiles they sent along (read them with read_file / view_image):\n" + "\n".join(f"- {g}" for g in given)
+        set_task(nid, description=body[:12000])
+        lo, hi = sorted((src["id"], f["id"]))
+        ex("INSERT OR IGNORE INTO firm_links(a,b,note,created) VALUES(?,?,?,?)", (lo, hi, "outsourcing", time.time()))
+        log("outsourced", f"to {f['name']}: {title}", src["id"], t["agent_id"], nid)
+        log("outsourced_in", f"from {src['name']}: {title}", f["id"], boss["id"], nid)
+        notes.append(f"Outsourced to the partner firm {f['name']} ({boss['name']}): {title}"
+                     + (f" with {len(given)} file(s)" if given else ""))
+        tg_notify(f"🤝 {src['name']} → {f['name']}: {title}")
+        made += 1
+    return made
+
+
+def deliver_outsourced(t):
+    """Ausgelagerte Aufgabe fertig: neue Dateien der Partnerfirma in den Auftraggeber kopieren, Hinweis an den Bericht haengen."""
+    parent = q1("SELECT * FROM tasks WHERE id=?", (t["parent_task_id"],)) if t.get("parent_task_id") else None
+    if not parent or parent["project_id"] == t["project_id"]:
+        return
+    src = q1("SELECT * FROM projects WHERE id=?", (t["project_id"],))
+    if not src:
+        return
+    try:
+        root = proj_dir(src["id"]).resolve()
+        picked = []
+        if root.is_dir():
+            for f in sorted(root.rglob("*"), key=lambda x: -x.stat().st_mtime if x.is_file() else 0):
+                if not f.is_file() or f.is_symlink():
+                    continue
+                rel = f.relative_to(root)
+                if rel.parts[0] in TRANSFER_SKIP or any(x.startswith(".") for x in rel.parts) or f.stat().st_mtime < t["created"] - 1:
+                    continue
+                picked.append((f, rel))
+        rel_dir = Path("partner") / (src.get("folder") or str(src["id"])) / f"task-{t['id']}"
+        got, fn = _copy_limited(picked, proj_dir(parent["project_id"]) / rel_dir, [])
+        note = (f"\n\n📦 Delivered by the partner firm {src['name']}: {len(got)} file(s) in {rel_dir.as_posix()}/"
+                + "".join(f"\n- {rel_dir.as_posix()}/{g}" for g in got[:30]) + ("\n" + "\n".join(fn) if fn else "")
+                if got else f"\n\n(Partner firm {src['name']} delivered no files, only this report.)")
+        set_task(t["id"], result=(t.get("result") or "") + note)
+        log("outsourced_back", f"{len(got)} file(s) to project {parent['project_id']}", src["id"], t["agent_id"], t["id"])
+    except Exception as e:
+        print("Delivery error:", e)
+
+
 def request_gate(kind, t, a, p, summary, data):
     apid = ex("INSERT INTO approvals(project_id,task_id,agent_id,kind,payload,created,data) VALUES(?,?,?,?,?,?,?)",
               (p["id"], t["id"], a["id"], kind, summary[:4000], time.time(), json.dumps(data, ensure_ascii=False)))
@@ -2093,6 +2287,9 @@ def decide_gate(ap, approve):
         kids = {k["id"]: k for k in team_of(a)}
         resolved = [(kids[d["to_id"]], d["title"], d["description"]) for d in data if d.get("to_id") in kids]
         made = create_subtasks(t, resolved, perms_of(a)["auto_run"], notes)
+        firms = {f["id"]: f for f in partner_firms(p["id"], project_chain(t))}
+        made += create_outsourced(t, [(firms[d["firm_id"]], d["title"], d["description"], d.get("files") or [])
+                                      for d in data if d.get("firm_id") in firms], notes)
         if made:
             set_task(t["id"], "waiting_subtasks", t["result"] + "\n\n" + tr("✅ Plan approved.\n" + "\n".join(notes)))
         else:
@@ -2152,6 +2349,8 @@ def finish(tid, status, result=None):
     if status in FINISHED:
         set_task(tid, feedback="", prev_result="")
         t = q1("SELECT * FROM tasks WHERE id=?", (tid,))
+        if t and t["parent_task_id"]:
+            deliver_outsourced(t)  # nur bei Auftraegen einer anderen Firma
         wake_parent(t)
         if t and not t["parent_task_id"]:
             inbox_arrived(t)  # oberste Aufgabe fertig = Post fuer den Besitzer
@@ -2159,10 +2358,13 @@ def finish(tid, status, result=None):
 
 # ------------------------------------------------------------ Uebergabe (handover.py)
 def top_task(t):
+    """Oberster Auftrag innerhalb derselben Firma (ein ausgelagerter Auftrag ist in der Partnerfirma selbst oberster)."""
     top, n = t, 0
     while top and top.get("parent_task_id") and n < 50:
-        top = q1("SELECT * FROM tasks WHERE id=?", (top["parent_task_id"],)) or {**dict(top), "parent_task_id": None}
-        n += 1
+        up = q1("SELECT * FROM tasks WHERE id=?", (top["parent_task_id"],))
+        if not up or up["project_id"] != top["project_id"]:
+            return {**dict(top), "parent_task_id": None}
+        top, n = up, n + 1
     return top
 
 
@@ -2358,7 +2560,7 @@ def run_with_tools(a, perms, messages, final_only, root, ids, images=None, want=
         # Produktpflicht: verlangt der Auftrag ein PDF/DOCX/EPUB und liegt keins in output/, wird es jetzt gebaut statt nur geplant
         if want and not pushed and "make_document" in allowed and not products_since(root, want[0], want[1]):
             d = parse_output(text)
-            busy = (want[3] and d.get("delegate")) or any(  # nur, was der Server auch wirklich ausfuehrt, zaehlt als "Team arbeitet weiter"
+            busy = (want[3] and d.get("delegate")) or (len(want) > 4 and want[4] and d.get("outsource")) or any(  # nur, was der Server auch wirklich ausfuehrt, zaehlt als "Team arbeitet weiter"
                 isinstance(r, dict) and str(r.get("verdict", "")).lower() == "revise" and str(r.get("task_id")) in want[2]
                 for r in (d.get("review") if isinstance(d.get("review"), list) else []))
             if not busy:
@@ -2611,9 +2813,11 @@ def execute_task(tid):
 
     set_task(tid, "running")
     log("task_start", f"{t['title']} [{mode}]", pid, aid, tid)
-    handover_note(tid, f"start ({mode})", "" if t["parent_task_id"] or HO.has_entries(proj_dir(pid), t["id"]) else t["title"], a)
+    handover_note(tid, f"start ({mode})", "" if top_task(t)["id"] != tid or HO.has_entries(proj_dir(pid), t["id"]) else t["title"], a)
     user = review_prompt(t, child_tasks) if mode == "review" else work_prompt(t)
-    messages = [{"role": "system", "content": build_system(a, p, mode, final_only, team_change_ok)},
+    firms = (firms_block(a, p, t) if mode in ("plan", "review") and not final_only and depth < MAX_DEPTH
+             and can_outsource(a, p) else "")
+    messages = [{"role": "system", "content": build_system(a, p, mode, final_only, team_change_ok, firms)},
                 {"role": "user", "content": user}]
     try:
         imgs = task_images(pid, t["description"] + "\n" + t["title"]) if perms.get("read_files") else []
@@ -2621,14 +2825,12 @@ def execute_task(tid):
             messages[-1]["content"] += ("\n\nATTACHED IMAGES (sent along by the server): "
                                         + ", ".join(f"no. {i} = {p}" for i, (p, _) in enumerate(imgs, 1))
                                         + ". Further images or pages of scanned PDFs: tool view_image.")
-        top = t
-        while top["parent_task_id"]:
-            top = q1("SELECT * FROM tasks WHERE id=?", (top["parent_task_id"],)) or {**dict(top), "parent_task_id": None}
+        top = top_task(t)
         exts = wanted_products(t["title"] + "\n" + t["description"])
         revisable = {str(c["id"]) for c in child_tasks if c["rounds"] < MAX_REVISIONS} if mode == "review" and not final_only and perms["judge"] else set()
         can_delegate = perms["delegate"] and bool(kids) and not final_only and mode != "recruit"
-        want = ((exts, top["created"], revisable, can_delegate)
-                if exts and (not t["parent_task_id"] or perms["media"]) else None)  # Chef oben bzw. Herstellung/Satz
+        want = ((exts, top["created"], revisable, can_delegate, bool(firms))
+                if exts and (top["id"] == tid or perms["media"]) else None)  # Chef oben bzw. Herstellung/Satz
         text, tokens, made_files = run_with_tools(a, perms, messages, final_only, proj_dir(pid), (pid, aid, tid),
                                                   [i for _, i in imgs], want)
     except Exception as e:
@@ -2727,6 +2929,7 @@ def execute_task(tid):
 
     # --- Delegieren
     dele = data.get("delegate")
+    resolved = []
     if dele:
         if not perms["delegate"]:
             notes.append("Delegating not allowed - ignored.")
@@ -2737,14 +2940,27 @@ def execute_task(tid):
             notes.append(f"No employees or max. delegation depth ({MAX_DEPTH}) reached - ignored.")
         else:
             resolved = resolve_delegations(dele, kids, notes)
-            if resolved and mode == "plan" and not t["parent_task_id"] and not t["schedule_id"] and gates_of(pid)["plan"] and not revised:
-                plan = "\n".join(f"- an {k['name']}: {ti}" + (f"\n  {clip(de, 300)}" if de else "") for k, ti, de in resolved)
-                request_gate("plan", t, a, p, f"Plan by {a['name']}:\n{result[:1500]}\n\nTasks:\n{plan}",
-                             [{"to_id": k["id"], "title": ti, "description": de} for k, ti, de in resolved])
-                set_task(tid, "waiting_approval", result + "\n\n🖐 Waiting for your approval of the plan:\n" + plan
-                         + ("\n" + "\n".join(notes) if notes else ""))
-                return
-            created += create_subtasks(t, resolved, perms["auto_run"], notes)
+
+    # --- Auslagern an eine Partnerfirma (nur oberster Chef, nur wenn das Firmenverzeichnis im Prompt stand)
+    outs = []
+    if data.get("outsource"):
+        if not firms:
+            notes.append("Outsourcing to other firms not possible here - ignored.")
+            log("denied", "outsource", pid, aid, tid)
+        else:
+            outs = resolve_outsourcing(data["outsource"], t, notes)
+    if resolved or outs:
+        if mode == "plan" and not t["parent_task_id"] and not t["schedule_id"] and gates_of(pid)["plan"] and not revised:
+            plan = "\n".join([f"- an {k['name']}: {ti}" + (f"\n  {clip(de, 300)}" if de else "") for k, ti, de in resolved]
+                             + [f"- 🤝 partner firm {f['name']}: {ti}" + (f"\n  {clip(de, 300)}" if de else "") for f, ti, de, _ in outs])
+            request_gate("plan", t, a, p, f"Plan by {a['name']}:\n{result[:1500]}\n\nTasks:\n{plan}",
+                         [{"to_id": k["id"], "title": ti, "description": de} for k, ti, de in resolved]
+                         + [{"firm_id": f["id"], "title": ti, "description": de, "files": fs} for f, ti, de, fs in outs])
+            set_task(tid, "waiting_approval", result + "\n\n🖐 Waiting for your approval of the plan:\n" + plan
+                     + ("\n" + "\n".join(notes) if notes else ""))
+            return
+        created += create_subtasks(t, resolved, perms["auto_run"], notes)
+        created += create_outsourced(t, outs, notes)
 
     # --- Team arbeitet (wieder): Chef wartet, bis alle fertig sind
     if revised or created:
@@ -4213,7 +4429,16 @@ def api_project_put(pid):
 
 @app.delete("/api/projects/<int:pid>")
 def api_project_del(pid):
+    # Auftraege, die diese Firma an andere ausgelagert hat, werden dort zu eigenen obersten Auftraegen (Post statt Waise)
+    ex("UPDATE tasks SET parent_task_id=NULL WHERE project_id<>? AND parent_task_id IN (SELECT id FROM tasks WHERE project_id=?)", (pid, pid))
+    waiting = [r["parent_task_id"] for r in q("SELECT DISTINCT parent_task_id FROM tasks WHERE project_id=? AND parent_task_id IN "
+                                              "(SELECT id FROM tasks WHERE project_id<>?)", (pid, pid))]
     ex("DELETE FROM tasks WHERE project_id=?", (pid,))
+    for pt in waiting:  # Auftraggeber wartete auf diese Firma: Chef darf weitermachen
+        if not q1("SELECT 1 FROM tasks WHERE parent_task_id=?", (pt,)):
+            ex("UPDATE tasks SET status='queued', updated=? WHERE id=? AND status='waiting_subtasks'", (time.time(), pt))
+        else:
+            wake_parent({"parent_task_id": pt})
     ex("DELETE FROM approvals WHERE project_id=?", (pid,))
     ex("DELETE FROM agents WHERE project_id=?", (pid,))
     ex("DELETE FROM schedules WHERE project_id=?", (pid,))
@@ -4251,7 +4476,8 @@ def firms_overview():
         agents = [{"id": a["id"], "name": a["name"], "role": a["role"], "parent_id": a["parent_id"], "busy": b.get(a["id"], 0)}
                   for a in q("SELECT id, name, role, parent_id FROM agents WHERE project_id=? ORDER BY id", (pid,))]
         partners = sorted({(l["b"] if l["a"] == pid else l["a"]) for l in links if pid in (l["a"], l["b"])})
-        out.append({**p, **stage, "agents": agents, "busy": sum(b.values()), "partners": partners, "logo": logo_version(pid)})
+        out.append({**p, **stage, "agents": agents, "busy": sum(b.values()), "partners": partners, "logo": logo_version(pid),
+                    "coop": coop_of(pid)})
     return {"firms": out, "links": links}
 
 
@@ -5077,6 +5303,23 @@ def hook_in(pid, tok):
         abort(400, "No matching agent in the project")
     log("hook_order", f"#{tid} an {a['name']}", pid, a["id"], tid)
     return jsonify({"task_id": tid, "agent": a["name"]})
+
+
+@app.get("/api/projects/<int:pid>/coop")
+def api_coop_get(pid):
+    return jsonify(coop_of(pid))
+
+
+@app.put("/api/projects/<int:pid>/coop")
+def api_coop_put(pid):
+    if not q1("SELECT 1 FROM projects WHERE id=?", (pid,)):
+        abort(404)
+    d = request.get_json(force=True) or {}
+    g = coop_of(pid)
+    g.update({k: bool(d[k]) for k in COOP_DEFAULT if k in d})
+    set_setting(f"coop:{pid}", json.dumps(g))
+    log("coop_changed", json.dumps(g), pid)
+    return jsonify(g)
 
 
 @app.get("/api/projects/<int:pid>/gates")
