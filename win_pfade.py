@@ -49,6 +49,8 @@ def bekannte_ordner(env=None, here=HERE):
     home = env.get("USERPROFILE", "")
     j = os.path.join
     dirs = [str(Path(sys.executable).parent)]  # venv\Scripts (piper.exe, playwright.exe)
+    if home:  # offizieller Claude-Installer (irm https://claude.ai/install.ps1 | iex) legt claude.exe hierhin, oft ohne PATH-Eintrag
+        dirs.append(j(home, ".local", "bin"))
     if local:
         dirs.append(j(local, "Microsoft", "WinGet", "Links"))
     dirs += [j(pf, "Tesseract-OCR"), j(pf86, "Tesseract-OCR")]

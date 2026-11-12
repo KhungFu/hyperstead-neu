@@ -63,6 +63,21 @@ Jeder Rechner braucht seine **eigene** Anmeldung: auf beiden einmal das Skript a
 kopieren, doch zwei Rechner mit demselben Abo teilen sich auch dasselbe Nutzungslimit; viele Agenten auf beiden
 Rechnern erreichen es schneller.
 
+## Claude mit seinen eigenen Werkzeugen, offline als Ausweg
+
+- **Eigene Werkzeuge (Bash, Lesen, Schreiben, Web) wie in Claude Code:** Das ist die **Werkstatt**. In der `.env`
+  `PCL_ALLOW_WERKSTATT=1`, Hyperstead neu starten, beim Agenten das Häkchen „Werkstatt“ setzen (Stufe 2 = normal).
+  Ohne Werkstatt läuft `claude -p` absichtlich ohne eigene Werkzeuge und nutzt nur die Werkzeuge von Hyperstead.
+  Einzelheiten: [werkstatt.md](werkstatt.md).
+- **Offline weiterarbeiten:** Mit `PCL_KI_AUSWEICH=ollama` antwortet Ollama auf dem eigenen Rechner, wenn Claude
+  scheitert (kein Internet, Abo-Limit, Anmeldung abgelaufen). Das Modell wählst du mit `PCL_KI_AUSWEICH_MODEL`
+  (leer = `OLLAMA_MODEL`). Jeder Ausweich steht im Audit-Log als `ai_fallback`. Ollama hat keine Claude-Werkzeuge,
+  arbeitet aber mit den Werkzeugen von Hyperstead (und mit `befehl`, wenn die Werkstatt an ist). Der Knopf ▶ Test
+  weicht nie aus, damit du siehst, ob Claude selbst geht.
+- **Windows:** Der offizielle Installer legt `claude.exe` nach `C:\Users\<du>\.local\bin`, trägt den Ordner aber nicht
+  immer in den PATH ein. Dann meldet ▶ Test „'claude' is not installed“, obwohl `claude-erneuern.ps1 -Pruefen` 0 liefert.
+  Hyperstead sucht diesen Ordner jetzt selbst; nach dem Update einmal neu starten.
+
 ## Hinweise
 
 - Ein `CLAUDE_CODE_OAUTH_TOKEN=` in `.env` geht auch, die Datei `tokens/claude-oauth-token.txt` hat aber Vorrang.
