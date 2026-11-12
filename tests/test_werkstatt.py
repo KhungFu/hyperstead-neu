@@ -60,6 +60,20 @@ def test_classify():
     assert W.classify("ls /tmp/projekt/film", r)[0] == "frei"
 
 
+def test_classify_veroeffentlichen_nur_mit_ok():
+    """Push, Merge, Release, Deployment laufen immer als Antrag (Freigabe des Besitzers je Stand)."""
+    r = "/tmp/projekt"
+    for c in ("git push -u origin feature/x", "git -C repo push", "gh pr merge 12 --squash", "gh release create v1.0",
+              "gh api -X PUT repos/o/r/pulls/3/merge", "gh repo delete o/r", "docker push ghcr.io/o/r:1",
+              "npm publish", "flyctl deploy", "kubectl apply -f k8s/"):
+        art, grund = W.classify(c, r)
+        assert art == "antrag", c
+    assert "owner" in W.classify("git push", r)[1]
+    for c in ("git status", "git diff", "git log --oneline -5", "git commit -m test", "git checkout -b feature/x",
+              "gh pr view 3", "gh pr create --draft --title t --body b", "gh api repos/o/r/pulls"):
+        assert W.classify(c, r)[0] == "frei", c
+
+
 def test_level(monkeypatch):
     a = {"perms": json.dumps({"werkstatt": True, "werkstatt_stufe": 3})}
     monkeypatch.delenv("PCL_ALLOW_WERKSTATT", raising=False)

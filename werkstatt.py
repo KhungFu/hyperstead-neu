@@ -70,9 +70,20 @@ DANGER = [
     r"\bformat(\.com)?\s+[a-z]:", r"\b(mkfs|fdisk|diskpart|dd)\b", r"\b(shutdown|reboot|halt|poweroff|Stop-Computer|Restart-Computer)\b",
     r"\breg(\.exe)?\s+(add|delete|import)\b", r"\b(Set-ItemProperty|New-ItemProperty)\b[^\n]*HK(LM|CU)",
     r"\b(schtasks|crontab|systemctl|service|sc(\.exe)?\s+(create|config|delete)|launchctl)\b",
-    r"\bgit\s+(push|remote\s+(add|set-url))\b", r"\bchmod\s+[0-7]*[67][0-7]*\s+/", r"\bchown\b",
+    r"\bgit\s+remote\s+(add|set-url)\b", r"\bchmod\s+[0-7]*[67][0-7]*\s+/", r"\bchown\b",
     r"\b(setx|Set-ExecutionPolicy|netsh|New-NetFirewallRule|icacls|takeown)\b",
     r"\b(Stop-Process|taskkill|kill|pkill|killall)\b",
+]
+# Veroeffentlichen (Wunsch ABI 2026-11-11): Push, Merge, Release, Deployment nur nach ausdruecklichem OK des Besitzers
+# fuer genau diesen Stand. Laeuft darum immer als Antrag (Mitarbeiter -> CEO -> Besitzer), auch in Stufe 2.
+PUBLISH = [
+    r"\bgit\b[^\n;&|]*\spush\b",
+    r"\bgh\s+pr\s+(merge|ready)\b", r"\bgh\s+release\s+(create|edit|upload|delete)\b",
+    r"\bgh\s+repo\s+(create|delete|edit|rename|archive|sync)\b", r"\bgh\s+workflow\s+run\b",
+    r"\bgh\s+api\b[^\n]*(-X|--method)\s*(PUT|POST|PATCH|DELETE)\b",
+    r"\b(vercel|netlify|flyctl|fly|railway|heroku|wrangler|firebase)\b[^\n]*\b(deploy|publish|release)\b",
+    r"\b(docker|podman)\s+push\b", r"\b(npm|pnpm|yarn)\s+publish\b", r"\bcargo\s+publish\b", r"\btwine\s+upload\b",
+    r"\bkubectl\s+(apply|rollout|set|delete)\b", r"\bterraform\s+(apply|destroy)\b",
 ]
 SECRET = [r"(^|[\\/\s\"'=])\.env\b", r"\btokens[\\/]", r"\bAPP_TOKEN\b", r"_API_KEY\b", r"\bpcl\.db\b", r"\.secret\b",
           r"\b(printenv|Get-ChildItem\s+env:|gci\s+env:|ls\s+env:)", r"(^|[\s;&|])(env|set)\s*($|[;&|])",
@@ -88,6 +99,9 @@ def classify(cmd, root):
     for p in SECRET:
         if re.search(p, c, re.I):
             return "verboten", "access data (.env, tokens, environment variables, credentials) is blocked for agents"
+    for p in PUBLISH:
+        if re.search(p, c, re.I):
+            return "antrag", "publishing (push/merge/release/deployment) needs the owner's explicit OK for exactly this state"
     for p in INSTALL:
         if re.search(p, c, re.I):
             return "antrag", "installation/new tool"

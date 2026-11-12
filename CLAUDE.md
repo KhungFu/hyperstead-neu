@@ -234,7 +234,17 @@ Selbst gehosteter Knoten-Editor für ein Team aus KI-Agenten (früher PaperclipL
 - Firma = Projekt. `firms_overview()` / `GET /api/firms`: je Projekt Stufe, Agenten (nur id/name/role/parent_id/busy, keine Rechte/Anbieter),
   `busy` (running+queued), `partners`; dazu `links`. Partnerschaften setzt nur der Besitzer: Tabelle `firm_links` (a<b, UNIQUE),
   `POST /api/firms/links` (a, b, note; doppelt -> `exists`), `DELETE /api/firms/links/<id>`, Audit `firm_link`/`firm_unlink`, Projekt loeschen
-  entfernt seine Links. Agenten sehen davon nichts. Tests `tests/test_firmen.py`.
+  entfernt seine Links. Agenten sehen die Links nicht (nur das Firmenverzeichnis beim Auslagern). Tests `tests/test_firmen.py`.
+- Auslagern (Wunsch ABI 2026-11-12): oberster Chef (kein parent_id, Recht delegate, `coop_of(pid).send`) bekommt in plan/review (nicht
+  `final_only`, Tiefe < MAX_DEPTH) `firms_block` (Name/Ziel/Rollen der Firmen aus `partner_firms`: `accept` an, Chef mit KI, nicht in
+  `project_chain` = keine Ringe) und das Feld `outsource` [{firm,title,description,files}] (max. `OUTSOURCE_MAX`). `create_outsourced` legt die
+  Aufgabe beim `top_agent` der Partnerfirma an, mit parent_task_id = eigene Aufgabe (dadurch wake_parent/review/revise wie im Team),
+  kopiert `files` nach `input/from-<ordner>/task-<id>/` (`transfer_files`, Limits wie copy_files) und legt `firm_links` (note outsourcing) an.
+  `finish` -> `deliver_outsourced`: neue Dateien der Partnerfirma seit `created` (ohne input/handover/partner/Dotpfade) nach
+  `partner/<ordner>/task-<id>/` beim Auftraggeber, Hinweis ans Ergebnis. `top_task` endet an der Firmengrenze (Handover je Firma).
+  Planschranke gilt mit (`approvals.data` Eintraege mit `firm_id`). Projekt loeschen: Kinder anderswo -> parent NULL (eigene Post),
+  wartender Auftraggeber wird geweckt. `settings coop:<pid>` {send, accept} Std. an, API `/api/projects/<id>/coop`, UI im 🤝-Fenster.
+  Mock: `OUTSOURCE TO <Firma>` / `SEND FILE <pfad>`. Tests `tests/test_auslagern.py`.
 - Seitenleiste (Wunsch ABI 2026-11-04, mit Bildern): unter „Projekte“ grosser Knopf „＋ Neues Projekt“ `#btnNewProj` (-> `newProjectDialog`: leer oder Vorlage), KEIN 🏙 und keine Ansichtsknoepfe. Grafik-Menue `#gViewMenu` in zwei Gruppen `.vgrp`: Klassik (Organigramm baum/gliederung/kreis, Bauplan) und Modern (nur hub stadt/kosmos/molekuel per `data-hubworld`). Weltall/Atom je Projekt aus dem Menue entfernt (Wunsch ABI 2026-11-04 abends, Code `drawMap`/`drawAtom` noch da), `setView` mappt world/atom -> org. In `VIEW='hub'` bleiben Kopfzeile und `#growth` sichtbar; `#hubbar` hat nur noch 🤝/← Alle Firmen/Suche (kein eigener Welt-Umschalter, kein `#hubClassic`). `#palette` (Agent hinzufuegen) ist in JEDER Ansicht sichtbar (Wunsch ABI): ausserhalb des Bauplans legt `addAgent(k)` ohne x/y rechts neben allen an, Hinweis je Ansicht (`.hint-plan/-org/-hub`), „Ordnen“ im Organigramm = Anordnung zuruecksetzen, im Hub = Drehung/Neigung zuruecksetzen + `fit` (Wunsch ABI).
 - Drehen/Neigen im Hub (Wunsch ABI 2026-11-04): `HUB.cam[welt]` = {rot, tilt 0–60} (localStorage `hs-hubcam`), `hubCamApply` setzt CSS `perspective rotateX rotateZ` auf `#hubsvg` (Ursprung = Mitte `HUB.box`) und `--hrot`; `text` dreht per CSS zurueck um seinen Anker (transform-origin = x/y-Attribut, `transform-box:view-box`, darum Texte im Hub nie mit eigenem `transform`), `.hlogo` um die Mitte. `hubTurn(dr,dt)`; Knoepfe `.cam` (#hRotL/#hRotR/#hTiltUp/#hTiltDn/#hCam0) in `.zoom` nur im Hub, rechte Maustaste/Shift-Ziehen = `drag.type='turn'`, Touch: zwei Finger drehen/gemeinsam schieben im `pinch`. `fit` passt den gedrehten Umriss ein. Klicks laufen ueber DOM-Treffer, funktionieren gedreht.
 - Links gewaehlte Firma im Hub (Wunsch ABI 2026-11-04): `hubMarkCur` (Ende von `drawHub` und in `openProject`) setzt `.firm.cur` (Leuchten, pulsiert ohne `motionOff`) und `#hubsvg.has-cur` (andere 50 %), nur aussen und ab 2 Firmen; `hubShowCur` faehrt sanft hin (Zoom bleibt). `openProject` verlaesst im Hub eine andere geoeffnete Firma.
@@ -306,6 +316,14 @@ Selbst gehosteter Knoten-Editor für ein Team aus KI-Agenten (früher PaperclipL
   `--disallowedTools` .env/tokens + Installationsbefehle, Stufe 3 `--permission-mode bypassPermissions`; codex `--sandbox read-only|workspace-write` bzw. bypass, `-C`.
   cwd = Projektordner, Zeitlimit `PCL_WERKSTATT_TIMEOUT`. Gegen echte CLIs ungetestet. Tests `tests/test_werkstatt.py`, Doku `docs/werkstatt.md`.
 - Nicht gebaut: Stopp-Knopf fuer laufende Befehle, Live-Protokoll eines CLI-Laufs.
+
+## Softwarefirma Steadforge Labs (Wunsch ABI 2026-11-11)
+- Vorlage `softwarefirma` in `company_templates.py` (CEO, CTO Release Management, Cloud architect, Backend, Frontend, QA & Security unter dem CEO,
+  Product & Business), `RELEASE_RULE` steht in CEO- und CTO-Prompt. Texte zum Einfuegen (Firmenwissen, CEO-Startauftrag, Freigabe-Saetze) und
+  Anleitung in `docs/steadforge/`. Firmenwissen als Text ins Feld (nur .md/.txt kommen in den Prompt, `PCL_KNOWLEDGE_CHARS` 8000).
+- Werkstatt `PUBLISH` (werkstatt.py): git push, gh pr merge/ready, gh release, gh repo, gh workflow run, gh api mit PUT/POST/PATCH/DELETE,
+  docker/npm/cargo publish, Deploy-CLIs, kubectl/terraform = immer Antrag (auch Stufe 2), dazu `--disallowedTools` fuer claude_cli.
+  Stufe 3 (`PCL_WERKSTATT_FREI=1`) umgeht das bewusst. Tests `tests/test_softwarefirma.py`, `test_classify_veroeffentlichen_nur_mit_ok`.
 
 ## Post / Telegram
 - `tasks.inbox`: `''` / `new` / `closed`, nur für oberste Aufgaben. `finish()` → `inbox_arrived()` → Telegram-Nachricht.
