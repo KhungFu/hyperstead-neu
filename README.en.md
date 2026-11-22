@@ -216,6 +216,7 @@ This list is extended with every change to the program. Each row says what the s
 | Passing tests for the Rust package | **No** package is created ("NO PACKAGE"); the agent gets the errors with line numbers and has to fix them. Without tests the package is created with a WARNING in the result. | Nothing, the agent fixes and builds again. Send it back via the boss if it gives up. |
 | Folder `.rust/` in the project (build folder) | Recreated on the next build, which then takes longer (everything is downloaded and compiled again). It is hidden and not part of the ZIP download. | Nothing. You may delete it if space runs out. |
 | Telegram token or chat ID | Telegram stays off, everything else runs. The self-test shows MISSING. | Only needed if you want messages on your phone. |
+| `TELEGRAM_CMD_CHAT_ID` (second chat only for commands, optional) | Without it: commands you have to run yourself arrive as a separate message „⌨️ COMMAND for you“ in the same chat as the mail. The mail itself stays as before. | Create a group with you and the bot, write `/start` there, enter the ID it names, restart. |
 | A folder or file in the project (`wissen/`, `input/`) | Folders that do not exist count as empty. The agents keep working without company knowledge. | Create or upload the file or folder in the project. |
 | Deleted file or emptied folder (file view, “🗑 Delete selected” / “🧹 Empty folder”) | The files are gone for good, there is no recycle bin. The folder itself stays, the agents keep working and treat missing files as above. If a deleted file is in the screenplay or named in the task, the agent reports it as missing. | Download “⬇ Everything as ZIP” first if you still need the files, otherwise upload the file again. |
 | Key of a video provider (e.g. `KLING_SECRET_KEY`, `HIGGSFIELD_API_KEY_SECRET`) | `video_generate` reports “VIDEO_PROVIDER=…, but … is missing in .env” and creates nothing; the other providers in the list keep working. The self-test shows the provider as MISSING. | Enter the key ([docs/videodienste.md](docs/videodienste.md)) or remove the provider from `VIDEO_PROVIDER`, restart. |
@@ -463,6 +464,7 @@ Every device remembers which categories are open.
 1. In Telegram: `@BotFather` → `/newbot` → copy the token → `.env`: `TELEGRAM_BOT_TOKEN=…`
 2. `sudo systemctl restart hyperstead`, write `/start` to the new bot → it tells you your chat ID.
 3. `.env`: enter `TELEGRAM_CHAT_ID=…`, restart the service. In the web under „Post“ there is a test message.
+4. Optional second chat only for commands: in Telegram create a group with you and the bot, write `/start` there, enter the ID it names as `TELEGRAM_CMD_CHAT_ID=…`, restart. Every command from the mail (code blocks `bash`/`powershell` and the agents' field `owner_commands`) then arrives there one by one, ready to copy. Without this line the commands arrive as a separate „⌨️“ message in the normal chat. The command chat controls nothing.
 
 **Using Telegram:**
 

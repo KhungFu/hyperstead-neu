@@ -216,6 +216,7 @@ Ovaj popis se dopunjuje pri svakoj promjeni programa. Svaki redak kaže što sus
 | Položeni testovi za Rust paket | Paket se **ne** pravi („NO PACKAGE“); agent dobiva greške s brojem reda i mora ih ispraviti. Bez testova paket nastaje s upozorenjem WARNING u rezultatu. | Ništa, agent ispravlja i ponovno gradi. Ako odustane, vratite zadatak preko šefa. |
 | Mapa `.rust/` u projektu (mapa za izradu) | Pri sljedećoj izradi pravi se ponovno, što tada traje duže (sve se ponovno preuzima i kompajlira). Skrivena je i nije dio ZIP preuzimanja. | Ništa. Smijete je obrisati ako ponestane mjesta. |
 | Telegram token ili ID chata | Telegram ostaje isključen, sve ostalo radi. Samoprovjera prikazuje MISSING. | Potrebno samo ako želite poruke na telefonu. |
+| `TELEGRAM_CMD_CHAT_ID` (drugi chat samo za naredbe, neobavezno) | Bez njega: naredbe koje morate sami izvršiti stižu kao zasebna poruka „⌨️ COMMAND for you“ u isti chat kao pošta. Sama pošta ostaje kao i dosad. | Napravite grupu sa sobom i botom, ondje napišite `/start`, upišite navedeni ID, ponovno pokrenite. |
 | Mapa ili datoteka u projektu (`wissen/`, `input/`) | Mape koje ne postoje smatraju se praznima. Agenti rade dalje bez znanja o tvrtki. | Stvorite ili otpremite datoteku ili mapu u projektu. |
 | Obrisana datoteka ili ispražnjena mapa (prikaz datoteka, „🗑 Delete selected“ / „🧹 Empty folder“) | Datoteke su trajno nestale, nema koša za smeće. Sama mapa ostaje, agenti rade dalje i datoteke koje nedostaju tretiraju kao gore. Ako se obrisana datoteka nalazi u scenariju ili je navedena u zadatku, agent je prijavljuje kao nedostajuću. | Ako vam datoteke još trebaju, prvo preuzmite „⬇ Everything as ZIP“, inače ponovno otpremite datoteku. |
 | Ključ video pružatelja (npr. `KLING_SECRET_KEY`, `HIGGSFIELD_API_KEY_SECRET`) | `video_generate` javlja „VIDEO_PROVIDER=…, but … is missing in .env“ i ništa ne stvara; ostali pružatelji s popisa rade dalje. Samoprovjera prikazuje pružatelja kao MISSING. | Unesite ključ ([docs/videodienste.md](docs/videodienste.md)) ili uklonite pružatelja iz `VIDEO_PROVIDER`, ponovno pokrenite. |
@@ -462,6 +463,7 @@ Svaki uređaj pamti koje su kategorije otvorene.
 1. U Telegramu `@BotFather` → `/newbot` → kopirajte token → `.env`: `TELEGRAM_BOT_TOKEN=…`
 2. `sudo systemctl restart hyperstead`, novom botu pošaljite `/start` → on vam kaže vaš ID chata.
 3. `.env`: upišite `TELEGRAM_CHAT_ID=…`, ponovno pokrenite servis. Na webu pod „Post“ postoji probna poruka.
+4. Neobavezno drugi chat samo za naredbe: u Telegramu napravite grupu sa sobom i botom, ondje napišite `/start`, navedeni ID upišite kao `TELEGRAM_CMD_CHAT_ID=…`, ponovno pokrenite. Svaka naredba iz pošte (blokovi koda `bash`/`powershell` i polje agenata `owner_commands`) tada stiže ondje pojedinačno, spremna za kopiranje. Bez ovog retka naredbe stižu kao zasebna poruka „⌨️“ u običan chat. Chat za naredbe ničim ne upravlja.
 
 **Rad u Telegramu:**
 

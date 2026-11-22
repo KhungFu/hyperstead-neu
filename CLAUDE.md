@@ -330,6 +330,9 @@ Selbst gehosteter Knoten-Editor für ein Team aus KI-Agenten (früher PaperclipL
 - `inbox_close`, `inbox_rework` (setzt feedback/prev_result, passes=0), `inbox_new_order` werden von Web-API und Telegram geteilt.
 - Telegram: Long-Polling (`tg_poll`), eigener Sender-Thread (`tg_notify` ist threadsicher), `tg_msgs` mappt Nachricht→Auftrag
   für Antworten. Nur `TELEGRAM_CHAT_ID` darf steuern. Token nie loggen (`_safe`). Test: `TELEGRAM_API` auf Fake-Server setzen.
+- Befehlskanal (Wunsch ABI 2026-11-22): `TELEGRAM_CMD_CHAT_ID` (`TG_CMD_CHATS`, steuert nichts, `/start` dort bestaetigt nur). JSON-Feld `owner_commands`
+  (`owner_commands_block` haengt ```shell-Bloecke ans Ergebnis), `tg_notify_post` -> `tg_notify_commands`: jeder Shell-Codeblock (`SHELL_LANGS`, max. `CMD_MAX`)
+  als eigene HTML-`<pre>`-Nachricht (Kopieren per Tipp), ohne zweiten Chat mit ⌨️ in den normalen Chat. Nur bei neuer Post, nicht bei /post. Tests `tests/test_befehlskanal.py`.
 
 ## Starten und testen
 ```bash

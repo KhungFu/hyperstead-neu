@@ -215,6 +215,7 @@ Bu liste programda her değişiklikle genişletilir. Her satır sistemin ne yapt
 | Rust paketi için geçen testler | Paket **oluşturulmaz** ("NO PACKAGE"); ajan hataları satır numarasıyla alır ve düzeltmek zorundadır. Test yoksa paket, sonuçta bir WARNING ile oluşturulur. | Hiçbir şey, ajan düzeltir ve yeniden derler. Vazgeçerse şef üzerinden geri gönderin. |
 | Projede `.rust/` klasörü (derleme klasörü) | Bir sonraki derlemede yeniden oluşturulur, o zaman daha uzun sürer (her şey yeniden indirilir ve derlenir). Gizlidir ve ZIP indirmesine dahil değildir. | Hiçbir şey. Yer kalmazsa silebilirsiniz. |
 | Telegram belirteci ya da sohbet kimliği | Telegram kapalı kalır, diğer her şey çalışır. Selbsttest MISSING gösterir. | Yalnızca mesajları telefonunuza almak istiyorsanız gerekir. |
+| `TELEGRAM_CMD_CHAT_ID` (yalnızca komutlar için ikinci sohbet, isteğe bağlı) | Olmadan: kendinizin çalıştırması gereken komutlar, postayla aynı sohbete ayrı bir „⌨️ COMMAND for you“ mesajı olarak gelir. Postanın kendisi eskisi gibi kalır. | Sizinle ve botla bir grup oluşturun, orada `/start` yazın, bildirilen kimliği girin, yeniden başlatın. |
 | Projede bir klasör ya da dosya (`wissen/`, `input/`) | Var olmayan klasörler boş sayılır. Ajanlar şirket bilgisi olmadan çalışmaya devam eder. | Projede dosyayı ya da klasörü oluşturun veya yükleyin. |
 | Silinen dosya veya boşaltılan klasör (dosya görünümü, „🗑 Delete selected“ / „🧹 Empty folder“) | Dosyalar kalıcı olarak gider, çöp kutusu yoktur. Klasörün kendisi kalır, ajanlar çalışmaya devam eder ve eksik dosyaları yukarıdaki gibi ele alır. Silinen dosya senaryoda geçiyorsa veya görevde adı geçiyorsa, ajan onu eksik olarak bildirir. | Dosyalara hâlâ ihtiyacınız varsa önce „⬇ Everything as ZIP“ ile indirin, aksi halde dosyayı yeniden yükleyin. |
 | Bir video sağlayıcısının anahtarı (ör. `KLING_SECRET_KEY`, `HIGGSFIELD_API_KEY_SECRET`) | `video_generate` „VIDEO_PROVIDER=…, but … is missing in .env“ (eksik) der ve hiçbir şey üretmez; listedeki diğer sağlayıcılar çalışmaya devam eder. Öz test sağlayıcıyı MISSING olarak gösterir. | Anahtarı girin ([docs/videodienste.md](docs/videodienste.md)) ya da sağlayıcıyı `VIDEO_PROVIDER` satırından silin, yeniden başlatın. |
@@ -456,6 +457,7 @@ Her cihaz hangi kategorilerin açık olduğunu hatırlar.
 1. Telegram'da `@BotFather` → `/newbot` → belirteci kopyalayın → `.env`: `TELEGRAM_BOT_TOKEN=…`
 2. `sudo systemctl restart hyperstead`, yeni bota `/start` yazın → sohbet kimliğinizi size söyler.
 3. `.env`: `TELEGRAM_CHAT_ID=…` girin, hizmeti yeniden başlatın. Web'de „Post“ altında bir test mesajı vardır.
+4. İsteğe bağlı, yalnızca komutlar için ikinci bir sohbet: Telegram'da sizinle ve botla bir grup oluşturun, orada `/start` yazın, bildirilen kimliği `TELEGRAM_CMD_CHAT_ID=…` olarak girin, yeniden başlatın. Postadaki her komut (`bash`/`powershell` kod blokları ve ajanların `owner_commands` alanı) oraya tek tek, kopyalamaya hazır gelir. Bu satır olmadan komutlar normal sohbete ayrı bir „⌨️“ mesajı olarak gelir. Komut sohbeti hiçbir şeyi yönetmez.
 
 **Telegram'da kullanım:**
 
