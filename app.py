@@ -82,6 +82,9 @@ SESSION_DAYS = 7
 # Die App ruft Telegram nur nach aussen ab (Long-Polling) - kein offener Port, geht auch hinter CGNAT.
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHATS = {c.strip() for c in os.environ.get("TELEGRAM_CHAT_ID", "").split(",") if c.strip()}
+# Zweiter Kanal nur fuer Befehle, die der Besitzer selbst ausfuehren muss (Wunsch ABI 2026-11-22). Leer = derselbe Chat, eigene Nachricht.
+# Dieser Chat steuert nichts (nur Ausgabe), darum nicht in TG_CHATS.
+TG_CMD_CHATS = {c.strip() for c in os.environ.get("TELEGRAM_CMD_CHAT_ID", "").split(",") if c.strip()} - TG_CHATS
 TG_API = os.environ.get("TELEGRAM_API", "https://api.telegram.org").rstrip("/")  # nur fuer Tests aendern
 
 # Alle Anbieter sprechen das OpenAI-kompatible Chat-Format.
@@ -558,7 +561,7 @@ def _run_cli(argv, prompt, cwd=None, timeout=None, extra_env=None):
     """CLI-Anbieter: Prompt per stdin, Antwort von stdout. Laeuft in einem leeren Ordner und ohne unsere Keys/Tokens in der Umgebung
     (sonst wuerde z.B. 'claude' den API-Key statt deines Abos benutzen, und das CLI-Programm bekaeme Zugriff auf alle Zugangsdaten)."""
     env = {k: v for k, v in os.environ.items()
-           if not (k.endswith(("_API_KEY", "_TOKEN", "_SECRET")) or k in ("APP_TOKEN", "TELEGRAM_CHAT_ID"))}
+           if not (k.endswith(("_API_KEY", "_TOKEN", "_SECRET")) or k in ("APP_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_CMD_CHAT_ID"))}
     wd = Path(cwd) if cwd else Path(WORKSPACE) / ".cli-run"  # Werkstatt: Projektordner, sonst leerer Ordner
     wd.mkdir(parents=True, exist_ok=True)
     tmo = timeout or int(os.environ.get("PCL_CLI_TIMEOUT", "600"))
@@ -1978,6 +1981,11 @@ def build_system(agent, project, mode, final_only=False, team_change_ok=False, f
         fields.append('"next_step": "what is still to do for this assignment"')
         rules.append("next_step is optional: if work is left, say concretely what comes next. The server saves it with your "
                      "result in handover/, so that you or another AI model can continue there after an interruption.")
+    if mode != "recruit":
+        fields.append('"owner_commands": [{"cmd": "exact command", "why": "what it does, where to run it"}]')
+        rules.append("owner_commands is optional: commands that only the owner can run himself (on his computer, server or account, "
+                     "things you cannot do here). Each one complete and ready to copy, without placeholders where you know the value. "
+                     "The server sends each command to the owner as its own message to copy.")
     fields.append('"remember": ["short lasting fact"]')
     rules.append(f"remember is optional (at most {REMEMBER_MAX} entries, one sentence each): things you want to remember for FUTURE assignments, "
                  "e.g. preferences and decisions of the owner, customers, style, what worked or failed. Not the result itself, "
@@ -2885,7 +2893,7 @@ def execute_task(tid):
     ex("INSERT INTO usage(agent_id,ts,tokens) VALUES(?,?,?)", (aid, time.time(), tokens))
 
     data = parse_output(text)
-    result = str(data.get("result") or text).strip()
+    result = str(data.get("result") or text).strip() + owner_commands_block(data.get("owner_commands"))
     if t.get("retries"):
         set_task(tid, retries=0, retry_at=0)
     handover_note(tid, f"result ({mode})", result[:1000]
@@ -3422,11 +3430,13 @@ def tg(method, **params):
     return d["result"]
 
 
-def tg_send_now(chat, text, task_id=None, buttons=None, force_reply=False, translate=True):
+def tg_send_now(chat, text, task_id=None, buttons=None, force_reply=False, translate=True, html=False):
     if translate:  # feste Meldungen in die Sprache des Besitzers (Wunsch ABI 2026-11-05)
         text = tr(text)
         buttons = [[{**b, "text": tr(b["text"])} for b in row] for row in buttons] if buttons else buttons
-    p = {"chat_id": chat, "text": text[:4000]}
+    p = {"chat_id": chat, "text": text if html else text[:4000]}  # html: Aufrufer kuerzt vor dem Escapen (Tags nie abschneiden)
+    if html:
+        p["parse_mode"] = "HTML"
     if buttons:
         p["reply_markup"] = {"inline_keyboard": buttons}
     elif force_reply:
@@ -3443,14 +3453,60 @@ def tg_notify(text, task_id=None, buttons=None, chats=None, translate=True):
     if not (TG_TOKEN and TG_CHATS):
         return
     for c in (chats or TG_CHATS):
-        _tg_out.put((c, text, task_id, buttons, translate))
+        _tg_out.put((c, text, task_id, buttons, translate, False))
+
+
+# Befehle fuer den Besitzer: Codebloecke in diesen Sprachen (und der Block aus owner_commands) gehen zusaetzlich als eigene Nachricht raus.
+SHELL_LANGS = {"bash", "sh", "shell", "zsh", "console", "terminal", "powershell", "pwsh", "ps", "ps1", "cmd", "bat", "batch"}
+CMD_MAX = 10  # hoechstens so viele Befehlsnachrichten je Post
+_FENCE_RE = re.compile(r"```[ \t]*([A-Za-z0-9_+-]*)[^\n]*\n(.*?)```", re.S)
+
+
+def owner_commands_block(raw):
+    """JSON-Feld owner_commands (Liste aus Text oder {cmd, why}) -> Block am Ende des Ergebnisses ('' wenn leer)."""
+    if not raw:
+        return ""
+    items = raw if isinstance(raw, list) else [raw]
+    out = []
+    for it in items[:CMD_MAX]:
+        cmd, why = (it.get("cmd") or it.get("command") or "", it.get("why") or "") if isinstance(it, dict) else (it, "")
+        cmd = str(cmd).strip().strip("`").strip()[:2000]
+        if cmd:
+            out.append((f"# {str(why).strip()[:200]}\n" if str(why).strip() else "") + cmd)
+    return ("\n\nCOMMANDS FOR THE OWNER (run them yourself):\n" + "\n".join(f"```shell\n{c}\n```" for c in out)) if out else ""
+
+
+def extract_commands(text):
+    """Befehle aus einem Ergebnis: Codebloecke mit Shell-Sprache, doppelte nur einmal."""
+    seen, out = set(), []
+    for lang, body in _FENCE_RE.findall(text or ""):
+        body = body.strip()
+        if lang.lower() in SHELL_LANGS and body and body not in seen:
+            seen.add(body)
+            out.append(body)
+    return out[:CMD_MAX]
+
+
+def tg_notify_commands(tid, text, title=""):
+    """Jeden Befehl als eigene Nachricht in den Befehlskanal (TELEGRAM_CMD_CHAT_ID), sonst in den normalen Chat mit Kennzeichnung ⌨️.
+    Als <pre>, damit Telegram ihn mit einem Tipp kopiert. Ohne Telegram nichts."""
+    if not (TG_TOKEN and TG_CHATS):
+        return 0
+    cmds = extract_commands(text)
+    chats = TG_CMD_CHATS or TG_CHATS
+    for i, c in enumerate(cmds, 1):
+        head = tr("⌨️ COMMAND for you") + (f" {i}/{len(cmds)}" if len(cmds) > 1 else "") + f" · #{tid}" + (f" “{title[:80]}”" if title else "")
+        msg = html.escape(head) + "\n<pre>" + html.escape(c[:3500]) + "</pre>"
+        for ch in chats:
+            _tg_out.put((ch, msg, None, None, False, True))
+    return len(cmds)
 
 
 def tg_sender():
     while True:
-        chat, text, task_id, buttons, translate = _tg_out.get()
+        chat, text, task_id, buttons, translate, as_html = _tg_out.get()
         try:
-            tg_send_now(chat, text, task_id, buttons, translate=translate)
+            tg_send_now(chat, text, task_id, buttons, translate=translate, html=as_html)
         except Exception as e:
             print("Telegram-Senden:", _safe(e))
             log("telegram_error", "Senden: " + _safe(e))
@@ -3474,6 +3530,8 @@ def tg_notify_post(tid, chats=None):
     if len(res) > 2800:
         buttons.append([{"text": tr("📄 Full result"), "callback_data": f"more:{tid}"}])
     tg_notify(text, tid, buttons, chats, translate=False)
+    if chats is None:  # nur bei neuer Post, nicht beim erneuten Zeigen per /post
+        tg_notify_commands(tid, res, t["title"])
 
 
 HELP_DE = ("Hyperstead – how it works:\n"
@@ -3716,7 +3774,10 @@ def tg_handle(u):
     rest = text[len(text.split()[0]):].strip() if cmd else text
     if chat not in TG_CHATS:
         if cmd == "/start":
+            if chat in TG_CMD_CHATS:
+                return tg_send_now(chat, "✅ This chat is the command channel: commands for you arrive here. Control Hyperstead in the main chat.")
             tg_send_now(chat, f"Your chat ID is {chat}.\nEnter it in .env: TELEGRAM_CHAT_ID={chat}\n"
+                              f"(For a second chat only for commands: TELEGRAM_CMD_CHAT_ID={chat})\n"
                               "Then restart Hyperstead.")
         elif _tg_denied.get(chat, 0) < 5:
             _tg_denied[chat] = _tg_denied.get(chat, 0) + 1
