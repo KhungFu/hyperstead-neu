@@ -349,6 +349,7 @@ Tests: `python -m pytest -q tests` (mock-Anbieter, ohne Internet). UI-Prüfung w
 
 ## Pflicht bei jedem Merge
 - Nach jedem Update die README aktualisieren: Die Tabelle „Was passiert, wenn etwas fehlt“ im Abschnitt Betrieb bekommt eine Zeile für jede neue oder geänderte Datei, jeden Schlüssel oder jede Abhängigkeit. Der Besitzer verlangt das ausdrücklich.
+- Jede neue oder umbenannte Umgebungsvariable kommt mit Kommentar und sicherem Platzhalter (nie echte Werte) in `.env.example` (Cloud-Betreiber: `deploy/cloud/env.example`). `tests/test_env_example.py` vergleicht alle `os.environ.get`/`_env`-Namen im Code damit; rein interne Namen stehen dort in `INTERN` (Wunsch ABI 2026-11-22).
 - Jeden Text (README, Anleitungen, Antworten im Thread) vor dem Merge oder Senden auf Rechtschreibfehler prüfen. Der Besitzer verlangt das ausdrücklich.
 - Die README gibt es in sechs Sprachen, je eine Datei: `README.md` (Deutsch, Hauptdatei), `README.en.md`, `README.tr.md`, `README.sr.md`, `README.bs.md`, `README.hr.md`. Jede Änderung an der README wird in allen sechs Dateien gleich umgesetzt (gleiche Abschnitte, gleiche Tabellen, gleiche Zeilen für „Was passiert, wenn etwas fehlt“). Alle Sprachdateien verlinken oben die anderen. Nach der Übersetzung auf Rechtschreibung prüfen und Anker-Links kontrollieren.
 - Nur die README wird übersetzt. Dashboard, Oberfläche und Anleitungen in `docs/` bleiben Deutsch bzw. unübersetzt.
